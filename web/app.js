@@ -51,16 +51,29 @@ function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
 
+function setStageState(label, live = false) {
+  const stage = $('stage-state');
+  stage.lastChild.textContent = ` ${label}`;
+  stage.classList.toggle('live', live);
+  $('voice-orb').classList.toggle('live', live);
+}
+
 function connectWS() {
   if (!micOn) return;
   ws = new WebSocket(wsURL());
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
-    $('hud-ws').textContent = 'on';
+    $('hud-ws').textContent = 'ON';
+    $('hud-ws').dataset.state = 'on';
+    setStageState('LIVE', true);
+    nextPlayTime = 0;                 // drop stale schedule after reconnect
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     send({ type: 'start', sampleRate: audioCtx.sampleRate });
   };
   ws.onclose = () => {
-    $('hud-ws').textContent = 'off';
+    $('hud-ws').textContent = 'OFF';
+    $('hud-ws').dataset.state = 'off';
+    setStageState(micOn ? 'RECONNECTING' : 'STANDBY', false);
     if (micOn) setTimeout(connectWS, 3000); // retry while mic is live
   };
   ws.onerror = () => ws.close();
@@ -79,17 +92,23 @@ function connectWS() {
 /* ---------------- results / HUD ---------------- */
 function onResult(msg) {
   const el = $('speaker');
+  const confidence = Math.round(msg.confidence * 100);
   if (msg.speaker === null) {
-    el.textContent = 'listening…';
+    el.textContent = 'Listening…';
     el.className = 'unknown';
+    $('confidence-readout').textContent = 'Below voice threshold';
   } else {
     el.textContent = msg.speaker;
     el.className = msg.speaker === 'unknown' ? 'unknown' : '';
+    $('confidence-readout').textContent = msg.speaker === 'unknown'
+      ? `${confidence}% / no match`
+      : `${confidence}% confidence`;
   }
-  $('conf-fill').style.width = `${Math.round(msg.confidence * 100)}%`;
+  $('conf-fill').style.width = `${confidence}%`;
+  $('match-readout').textContent = String(confidence).padStart(2, '0');
   $('hud-lat').textContent = `${msg.latency_ms} ms`;
   $('hud-rtf').textContent = msg.rtf;
-  $('hud-voiced').textContent = msg.speaker === null ? 'no' : 'yes';
+  $('hud-voiced').textContent = msg.speaker === null ? 'NO' : 'YES';
 }
 
 /* ---------------- mic pipeline ---------------- */
@@ -139,8 +158,13 @@ async function startMic() {
 
     micOn = true;
     connectWS();
-    $('btn-mic').textContent = 'Mic live';
-    $('btn-mic').disabled = true;
+    const micButton = $('btn-mic');
+    micButton.querySelector('.control-copy strong').textContent = 'Voice session live';
+    micButton.querySelector('.control-copy small').textContent = 'Audio is routing through the Pi';
+    micButton.classList.add('live');
+    micButton.disabled = true;
+    $('speaker').textContent = 'Listening…';
+    $('confidence-readout').textContent = 'Waiting for first window';
     $('btn-ptt').classList.remove('hidden');
     $('fx-row').classList.remove('hidden');
     $('enroll').classList.remove('hidden');
@@ -178,8 +202,12 @@ async function setAEC(on) {
 $('aec').addEventListener('change', (e) => setAEC(e.target.checked));
 
 /* ---------------- speaker playback ---------------- */
+let rxFrames = 0;
 function onPlayback(arrayBuffer) {
   if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  rxFrames += 1;
+  if (rxFrames % 10 === 0) $('hud-aud').textContent = `${rxFrames}f`;
   const pcm = new Int16Array(arrayBuffer);
   let sum = 0;
   for (let i = 0; i < pcm.length; i += 4) {
@@ -212,7 +240,11 @@ function onPCM(arrayBuffer) {
     const a = Math.abs(v);
     if (a > peak) peak = a;
   }
-  $('level-fill').style.width = `${Math.min(100, peak * 140)}%`;
+  const level = Math.min(1, peak * 1.4);
+  const levelPercent = Math.round(level * 100);
+  document.documentElement.style.setProperty('--level', level.toFixed(3));
+  $('level-fill').style.width = `${levelPercent}%`;
+  $('level-readout').textContent = String(levelPercent).padStart(2, '0');
 }
 
 /* ---------------- push-to-talk ---------------- */
@@ -234,9 +266,13 @@ $('btn-enroll').addEventListener('click', () => {
   if (!name || enrolling) return;
   send({ type: 'enroll_start', name });
 });
+$('enroll-name').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') $('btn-enroll').click();
+});
 
 function onEnrollStarted(msg) {
   enrolling = true;
+  $('btn-enroll').disabled = true;
   let left = msg.seconds;
   const label = `Recording ${msg.name}… `;
   $('enroll-status').textContent = `${label}${left}s — talk normally`;
@@ -245,7 +281,7 @@ function onEnrollStarted(msg) {
     if (left <= 0) {
       clearInterval(enrollTimer);
       send({ type: 'enroll_stop' });
-      $('enroll-status').textContent = 'computing embedding on the Pi…';
+      $('enroll-status').textContent = 'Computing voice profile on the Pi…';
     } else {
       $('enroll-status').textContent = `${label}${left}s — talk normally`;
     }
@@ -254,16 +290,21 @@ function onEnrollStarted(msg) {
 
 function onEnrolled(msg) {
   enrolling = false;
+  $('btn-enroll').disabled = false;
   $('enroll-status').textContent = msg.ok
     ? `Enrolled "${msg.name}".`
     : `Enroll failed: ${msg.error}`;
-  if (msg.ok) refreshProfiles();
+  if (msg.ok) {
+    $('enroll-name').value = '';
+    refreshProfiles();
+  }
 }
 
 function onTargetSet(msg) {
   activeTarget = msg.name;
+  $('target-label').textContent = msg.found ? `TARGET / ${msg.name}` : 'NO TARGET';
   refreshProfiles();
-  if (!msg.found) showError(`no voice profile for "${msg.name}" — converting raw`);
+  if (!msg.found) showError(`No voice profile for "${msg.name}" — converting raw`);
 }
 
 /* ---------------- voice effects ---------------- */
@@ -283,21 +324,58 @@ async function refreshProfiles() {
     const { profiles } = await res.json();
     const ul = $('profiles');
     ul.innerHTML = '';
+    if (!profiles.length) {
+      const empty = document.createElement('li');
+      empty.className = 'empty-profile';
+      empty.textContent = 'No voices enrolled yet. Add a teammate below to create the first target.';
+      ul.append(empty);
+      return;
+    }
     for (const name of profiles) {
       const li = document.createElement('li');
       if (name === activeTarget) li.classList.add('active');
-      const span = document.createElement('span');
-      span.textContent = name;
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      li.setAttribute('aria-label', `Use ${name} as conversion target`);
+
+      const avatar = document.createElement('span');
+      avatar.className = 'profile-avatar';
+      avatar.textContent = name.split(/\s+/).slice(0, 2)
+        .map((part) => part.charAt(0)).join('');
+
+      const copy = document.createElement('span');
+      copy.className = 'profile-copy';
+      const profileName = document.createElement('span');
+      profileName.className = 'profile-name';
+      profileName.textContent = name;
+      const profileState = document.createElement('span');
+      profileState.className = 'profile-state';
+      profileState.textContent = name === activeTarget ? 'Live target' : 'Tap to select';
+      copy.append(profileName, profileState);
+
       const del = document.createElement('button');
       del.className = 'del';
+      del.type = 'button';
       del.textContent = '×';
+      del.setAttribute('aria-label', `Delete ${name}`);
       del.onclick = async (e) => {
         e.stopPropagation();
         await fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        if (name === activeTarget) {
+          activeTarget = null;
+          $('target-label').textContent = 'NO TARGET';
+        }
         refreshProfiles();
       };
-      li.onclick = () => send({ type: 'target', name });
-      li.append(span, del);
+      const choose = () => send({ type: 'target', name });
+      li.onclick = choose;
+      li.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          choose();
+        }
+      };
+      li.append(avatar, copy, del);
       ul.append(li);
     }
   } catch { /* non-fatal */ }
@@ -311,11 +389,13 @@ async function pollSystem() {
     const s = await res.json();
     const badge = $('temp-badge');
     if (s.on_pi && s.temp_c != null) {
-      badge.textContent = `Pi ${s.temp_c.toFixed(1)}°C`;
+      badge.textContent = `PI ${s.temp_c.toFixed(1)}°C`;
       badge.className = 'badge' + (s.throttled ? ' throttled' : s.temp_c > 70 ? ' hot' : '');
-      if (s.throttled) badge.title += ' — THROTTLING';
+      badge.title = s.throttled ? 'Raspberry Pi thermal — THROTTLING' : 'Raspberry Pi thermal';
     } else {
-      badge.textContent = 'Pi n/a';
+      badge.textContent = 'PI N/A';
+      badge.className = 'badge';
+      badge.title = 'Raspberry Pi not detected';
     }
   } catch { /* non-fatal */ }
 }
@@ -328,9 +408,14 @@ function drawWave() {
   const g = cv.getContext('2d');
   const w = cv.width, h = cv.height, mid = h / 2;
   (function frame() {
-    g.fillStyle = '#161b22';
-    g.fillRect(0, 0, w, h);
-    g.strokeStyle = '#58a6ff';
+    g.clearRect(0, 0, w, h);
+    const gradient = g.createLinearGradient(0, 0, w, 0);
+    gradient.addColorStop(0, 'rgba(100, 128, 62, 0)');
+    gradient.addColorStop(.22, 'rgba(100, 128, 62, .85)');
+    gradient.addColorStop(.78, 'rgba(35, 41, 31, .9)');
+    gradient.addColorStop(1, 'rgba(35, 41, 31, 0)');
+    g.strokeStyle = gradient;
+    g.lineWidth = 2;
     g.beginPath();
     const step = Math.ceil(VIS_LEN / w);
     for (let x = 0; x < w; x++) {
@@ -344,3 +429,12 @@ function drawWave() {
 }
 
 $('btn-mic').addEventListener('click', startMic);
+
+function updateClock() {
+  $('local-time').textContent = new Intl.DateTimeFormat([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date());
+}
+updateClock();
+setInterval(updateClock, 30000);

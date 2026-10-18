@@ -85,6 +85,12 @@ app ships the team's feedback plan built in:
 - **Demo choreography:** phone mic toward the mouth, speaker toward the
   audience, lowest theatrically-acceptable volume; the mask's foam doubles
   as acoustic separation.
+- **"Not hearing anything?" checklist:** HUD `SOCKET` = ON and `AUDIO RX`
+  counter climbing = audio IS reaching the phone → the problem is speaker
+  routing. On Android Chrome, `echoCancellation:true` can switch to
+  call-mode audio and play through the **earpiece** at low volume instead
+  of the loudspeaker — flip the AEC toggle off. Also check media volume
+  (not ringer volume) and that no Bluetooth device stole the output.
 
 ## 6. Features / endpoints
 
