@@ -23,10 +23,10 @@ class Settings:
     model_module: str | None
     conf_threshold: float    # min cosine-sim confidence to name a speaker
     silence_rms: float       # below this RMS a window counts as silence
-    clone_prepare_timeout_sec: float  # max wait for an optional clone warmup
     # Storage
     profiles_path: Path
     web_dir: Path
+    clone_prepare_timeout_sec: float = 15.0  # optional clone warmup deadline
 
     @property
     def buffer_samples(self) -> int:

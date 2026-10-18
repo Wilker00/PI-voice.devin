@@ -116,3 +116,44 @@ def test_api_endpoints(app):
     assert client.get("/api/health").json()["ok"] is True
     assert "on_pi" in client.get("/api/system").json()
     assert client.get("/api/profiles").json() == {"profiles": []}
+
+
+def test_ptt_classifies_exactly_the_held_audio(app):
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "start", "sampleRate": 16000}))
+        recv_until(ws, "started")
+        push_pcm(ws, tone(1.0))
+        ws.send_text(json.dumps({"type": "ptt_start"}))
+        push_pcm(ws, tone(2.0))
+        ws.send_text(json.dumps({"type": "final"}))
+        r = recv_until(ws, "result")
+        while not r["final"]:   # live results from before the press
+            r = recv_until(ws, "result")
+        assert r["held_sec"] == 2.0 and r["window_sec"] == 2.0
+
+
+def test_ptt_short_tap_borrows_one_second(app):
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "start", "sampleRate": 16000}))
+        recv_until(ws, "started")
+        push_pcm(ws, tone(1.5))
+        ws.send_text(json.dumps({"type": "ptt_start"}))
+        push_pcm(ws, tone(0.2))
+        ws.send_text(json.dumps({"type": "final"}))
+        r = recv_until(ws, "result")
+        while not r["final"]:
+            r = recv_until(ws, "result")
+        assert r["held_sec"] == 0.2 and r["window_sec"] == 1.0
+
+
+def test_ptt_release_without_audio_still_answers(app):
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "start", "sampleRate": 16000}))
+        recv_until(ws, "started")
+        ws.send_text(json.dumps({"type": "ptt_start"}))
+        ws.send_text(json.dumps({"type": "final"}))
+        r = recv_until(ws, "result")
+        assert r["final"] and r["error"] == "not enough audio"

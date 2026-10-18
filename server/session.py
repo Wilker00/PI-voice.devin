@@ -12,7 +12,7 @@ from starlette.websockets import WebSocket
 from .audio import (RingBuffer, StreamResampler, float32_to_pcm16,
                     pcm16_to_float32)
 from .config import Settings
-from .model import EFFECTS
+from .model import EFFECTS, VoiceStream
 from .profiles import ProfileStore
 
 log = logging.getLogger("pi_voice.session")
@@ -36,6 +36,10 @@ class ClientSession:
         # Prefer a stateful per-client stream when the model offers one.
         self.conv = (model.open_stream()
                      if hasattr(model, "open_stream") else model)
+        # Character effects always stay local and chunk-level, even when a
+        # custom clone converter buffers utterances or calls another process.
+        self.dsp = VoiceStream(settings.model_sr)
+        self.effect = "clean"
         self._stop = asyncio.Event()
         self._prepare_task: asyncio.Task | None = None
         self._transform_generation = 0
@@ -74,7 +78,8 @@ class ClientSession:
         self._samples_in += pcm.size
         # Per-chunk conversion keeps the speaker loop low-latency.
         # While enrolling we buffer only — no playback to feed back.
-        convert = getattr(self.conv, "convert", None)
+        converter = self.conv if self.effect == "clone" else self.dsp
+        convert = getattr(converter, "convert", None)
         if convert is None or self.enrolling:
             return
         out = await asyncio.to_thread(convert, pcm, self.target)
@@ -118,9 +123,7 @@ class ClientSession:
             self.target_name = name
             self.target = self.profiles.get(name)
             # Keep audio immediate while a custom clone implementation warms.
-            set_fx = getattr(self.conv, "set_effect", None)
-            if set_fx:
-                set_fx(self._last_character_effect)
+            self._set_effect(self._last_character_effect)
             await self._send({"type": "target_set", "name": name,
                               "found": self.target is not None})
             await self._send({"type": "effect_set",
@@ -145,9 +148,7 @@ class ClientSession:
             if name not in EFFECTS:
                 raise ValueError(f"unknown effect: {name!r}")
             await self._cancel_prepare_and_report()
-            set_fx = getattr(self.conv, "set_effect", None)
-            if set_fx:
-                set_fx(name)
+            self._set_effect(name)
             if name not in ("clean", "clone"):
                 self._last_character_effect = name
             await self._send({"type": "effect_set", "name": name})
@@ -170,9 +171,7 @@ class ClientSession:
                 )
             if generation != self._transform_generation or self._stop.is_set():
                 return
-            set_fx = getattr(self.conv, "set_effect", None)
-            if set_fx:
-                set_fx("clone")
+            self._set_effect("clone")
             await self._send({"type": "effect_set", "name": "clone"})
             await self._send({
                 "type": "transform_state", "phase": "ready",
@@ -208,6 +207,15 @@ class ClientSession:
         if task and not task.done():
             task.cancel()
         return task, target
+
+    def _set_effect(self, name: str) -> None:
+        """Route character effects through local DSP and clone through model."""
+        self.effect = name
+        if name != "clone":
+            self.dsp.set_effect(name)
+        set_fx = getattr(self.conv, "set_effect", None)
+        if set_fx:
+            set_fx(name)
 
     async def _cancel_prepare_and_report(self) -> None:
         task, target = self._cancel_prepare()

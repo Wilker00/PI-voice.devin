@@ -294,6 +294,9 @@ class VCModel:
         pcm = np.asarray(pcm, np.float32)
         ref = None
         if target is not None:
+            if isinstance(target, dict):
+                target = target.get("emb")
+        if target is not None:
             ref = np.asarray(target, np.float32)
         if ref is None or ref.size < self.min_ref:
             # No usable target selected — their UI calls this "converting raw".
