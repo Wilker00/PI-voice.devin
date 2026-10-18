@@ -5,30 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0d0e">
   <meta name="description" content="Pi Voice is a real-time, on-device voice identification and transformation instrument.">
-  <title>Pi Voice — Signal Identity System</title>
+  <title>Pi Voice — Voice Transformation System</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="ambient-grid" aria-hidden="true"></div>
   <div class="grain-layer" aria-hidden="true"></div>
+  <canvas id="rain" aria-hidden="true"></canvas>
 
   <div class="app-shell" id="app-shell" data-session="idle">
     <header class="system-header boot-item">
       <a class="brand" href="/" aria-label="Pi Voice home">
         <span class="brand-mark" aria-hidden="true">
-          <i></i><i></i><i></i><i></i><i></i><i></i>
+          <svg viewBox="0 0 36 36">
+            <path class="brand-wave-in" d="M4 20h4l2.5-7 3.5 12 3-9 2 5"/>
+            <path class="brand-wave-out" d="M19 21h2l2-6 3 9 2.5-6H32"/>
+            <path class="brand-shift" d="M13 8h10m0 0-3-3m3 3-3 3"/>
+          </svg>
         </span>
         <span class="brand-copy">
           <strong>PI/VOICE</strong>
-          <small>Signal identity system</small>
+          <small>Voice transformation system</small>
         </span>
       </a>
-
-      <div class="header-channel" aria-hidden="true">
-        <span>LOCAL_NODE</span>
-        <i></i>
-        <span>CHANNEL_03</span>
-      </div>
 
       <div class="node-status">
         <span class="node-label"><i></i>Node 03</span>
@@ -50,8 +49,8 @@
       <section class="hero boot-item" aria-labelledby="page-title">
         <div class="hero-copy">
           <p class="eyebrow"><span>SYS.01</span> Real-time voice instrument</p>
-          <h1 id="page-title">VOICE<span class="slash">/</span><br>IDENTITY</h1>
-          <p class="hero-description">Capture, identify, shape, and route a voice through the Pi in real time. One local signal path, built for every screen.</p>
+          <h1 id="page-title"><span class="glitch" data-text="VOICE/">VOICE<span class="slash">/</span></span><br><span class="glitch" data-text="IDENTITY">IDENTITY</span></h1>
+          <p class="hero-description">Capture, identify, shape, and route a voice through the Pi in real time. One local audio path, built for every screen.</p>
         </div>
 
         <div class="hero-spec" aria-label="System capabilities">
@@ -75,23 +74,25 @@
 
           <header class="panel-heading stage-header">
             <div>
-              <p class="section-index">01 / Live signal</p>
+              <p class="section-index">01 / Live voice</p>
               <h2 id="monitor-title">Voice monitor</h2>
             </div>
             <span id="stage-state"><i></i>STANDBY</span>
           </header>
 
-          <div id="voice-orb" class="voice-monitor" data-signal="idle">
+          <div id="voice-orb" class="voice-monitor" data-voice-state="idle">
             <div class="monitor-meta monitor-meta-top" aria-hidden="true">
               <span>IN_01 / PCM16</span>
               <span>16KHZ / MONO</span>
             </div>
-            <div class="signal-line" aria-hidden="true"></div>
+            <div class="monitor-line" aria-hidden="true"></div>
+            <div class="neon-floor" aria-hidden="true"></div>
             <canvas id="wave" width="900" height="260" aria-hidden="true"></canvas>
+            <div class="scan-sweep" aria-hidden="true"></div>
             <div class="orb-copy">
               <span class="orb-label">Now hearing</span>
               <div id="speaker" class="unknown">Off air</div>
-              <span id="confidence-readout">Waiting for signal</span>
+              <span id="confidence-readout">Waiting for voice</span>
             </div>
           </div>
 
@@ -131,11 +132,11 @@
 
         <div class="rail">
           <section id="fx-row" class="module cut-panel effects-panel locked boot-item" data-session-lock inert aria-disabled="true" aria-labelledby="fx-title">
-            <div class="lock-indicator" aria-hidden="true"><i></i><span>Awaiting signal</span></div>
+            <div class="lock-indicator" aria-hidden="true"><i></i><span>Start session</span></div>
             <header class="panel-heading">
               <div>
                 <p class="section-index">02 / Treatment</p>
-                <h2 id="fx-title">Shape signal</h2>
+                <h2 id="fx-title">Voice effects</h2>
               </div>
               <span class="module-value">FX/<b id="hud-fx">clean</b></span>
             </header>
@@ -149,7 +150,7 @@
           </section>
 
           <section id="enroll" class="module cut-panel library-panel locked boot-item" data-session-lock inert aria-disabled="true" aria-labelledby="voices-title">
-            <div class="lock-indicator" aria-hidden="true"><i></i><span>Awaiting signal</span></div>
+            <div class="lock-indicator" aria-hidden="true"><i></i><span>Start session</span></div>
             <header class="panel-heading">
               <div>
                 <p class="section-index">03 / Identity bank</p>
@@ -201,7 +202,6 @@
 
     <footer class="app-footer boot-item">
       <span>PI VOICE © 2026</span>
-      <span class="footer-system">LOCAL INFERENCE / PRIVATE SIGNAL</span>
       <span id="local-time">--:--</span>
     </footer>
   </div>

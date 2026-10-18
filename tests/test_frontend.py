@@ -58,6 +58,7 @@ def test_page_load_contract():
     assert any(link.get("href") == "style.css" for link in parser.links)
     assert any(script.get("src") == "app.js" for script in parser.scripts)
     assert "fonts.googleapis.com" not in html
+    assert "signal" not in html.lower()
 
 
 def test_responsive_motion_and_local_fonts():

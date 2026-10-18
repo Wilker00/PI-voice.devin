@@ -112,12 +112,12 @@ function onResult(msg) {
   if (msg.speaker === null) {
     el.textContent = 'Listening…';
     el.className = 'unknown';
-    monitor.dataset.signal = 'listening';
+    monitor.dataset.voiceState = 'listening';
     $('confidence-readout').textContent = 'Below voice threshold';
   } else {
     el.textContent = msg.speaker;
     el.className = msg.speaker === 'unknown' ? 'unknown' : '';
-    monitor.dataset.signal = msg.speaker === 'unknown' ? 'unknown' : 'identified';
+    monitor.dataset.voiceState = msg.speaker === 'unknown' ? 'unknown' : 'identified';
     $('confidence-readout').textContent = msg.speaker === 'unknown'
       ? `${confidence}% / no match`
       : `${confidence}% confidence`;
@@ -467,6 +467,58 @@ function drawWave() {
     requestAnimationFrame(frame);
   })();
 }
+
+/* ---------------- matrix rain ---------------- */
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+(function drawRain() {
+  const cv = $('rain');
+  if (reduceMotion) return;
+  const g = cv.getContext('2d');
+  const GLYPHS = '01ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾌｺｴﾃｷﾑﾈﾗｯ<>/\\|=+*#';
+  const CELL = 26;
+  const TRAIL = 11;
+  let cols = [];
+
+  function resize() {
+    cv.width = innerWidth;
+    cv.height = innerHeight;
+    const count = Math.ceil(innerWidth / CELL);
+    cols = Array.from({ length: count }, () => ({
+      y: Math.random() * innerHeight * 1.4 - innerHeight * .4,
+      speed: .35 + Math.random() * 1.5,
+      head: Math.random() < .12, // orange-tipped streaks
+    }));
+  }
+  resize();
+  addEventListener('resize', resize);
+
+  let last = 0;
+  (function frame(t) {
+    requestAnimationFrame(frame);
+    if (t - last < 50) return;   // ~20fps is plenty for ambience
+    last = t;
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.font = '13px "IBM Plex Mono", monospace';
+    cols.forEach((c, i) => {
+      const x = i * CELL + 8;
+      for (let j = 0; j < TRAIL; j++) {
+        const y = c.y - j * CELL;
+        if (y < -CELL || y > cv.height + CELL) continue;
+        const fade = 1 - j / TRAIL;
+        g.fillStyle = j === 0 && c.head
+          ? `rgba(255, 107, 66, ${(.5 * fade + .25).toFixed(3)})`
+          : `rgba(199, 216, 201, ${(.34 * fade).toFixed(3)})`;
+        g.fillText(GLYPHS[(Math.random() * GLYPHS.length) | 0], x, y);
+      }
+      c.y += c.speed * CELL * .5;
+      if (c.y - TRAIL * CELL > cv.height) {
+        c.y = -Math.random() * cv.height * .3;
+        c.speed = .35 + Math.random() * 1.5;
+        c.head = Math.random() < .12;
+      }
+    });
+  })(0);
+})();
 
 $('btn-mic').addEventListener('click', startMic);
 
