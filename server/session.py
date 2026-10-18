@@ -9,8 +9,8 @@ import time
 import numpy as np
 from starlette.websockets import WebSocket
 
-from .audio import (RingBuffer, float32_to_pcm16, pcm16_to_float32,
-                    resample_linear)
+from .audio import (RingBuffer, StreamResampler, float32_to_pcm16,
+                    pcm16_to_float32)
 from .config import Settings
 from .profiles import ProfileStore
 
@@ -26,9 +26,13 @@ class ClientSession:
         self.s = settings
         self.ring = RingBuffer(settings.buffer_samples)
         self.src_rate = settings.model_sr  # until client reports otherwise
+        self._set_rate(self.src_rate)
         self.enrolling: str | None = None
         self.target_name: str | None = None
-        self.target_emb: np.ndarray | None = None
+        self.target: dict | None = None   # {"emb": ndarray, "f0": float|None}
+        # Prefer a stateful per-client stream when the model offers one.
+        self.conv = (model.open_stream()
+                     if hasattr(model, "open_stream") else model)
         self._stop = asyncio.Event()
 
     async def run(self) -> None:
@@ -56,29 +60,32 @@ class ClientSession:
                     await self._send({"type": "error", "message": str(exc)})
 
     async def _on_pcm(self, data: bytes) -> None:
-        pcm = pcm16_to_float32(data)
-        if self.src_rate != self.s.model_sr:
-            pcm = resample_linear(pcm, self.src_rate, self.s.model_sr)
+        pcm = self._rs_in.process(pcm16_to_float32(data))
         self.ring.write(pcm)
         # Per-chunk conversion keeps the speaker loop low-latency.
         # While enrolling we buffer only — no playback to feed back.
-        convert = getattr(self.model, "convert", None)
+        convert = getattr(self.conv, "convert", None)
         if convert is None or self.enrolling:
             return
-        out = await asyncio.to_thread(convert, pcm, self.target_emb)
+        out = await asyncio.to_thread(convert, pcm, self.target)
         if out is None or out.size == 0:
             return
-        if self.src_rate != self.s.model_sr:
-            out = resample_linear(out, self.s.model_sr, self.src_rate)
+        out = self._rs_out.process(out)
         try:
             await self.ws.send_bytes(float32_to_pcm16(out))
         except Exception:
             self._stop.set()
 
+    def _set_rate(self, rate: int) -> None:
+        # Fresh stream state per "start" (also after a reconnect).
+        self.src_rate = rate
+        self._rs_in = StreamResampler(rate, self.s.model_sr)
+        self._rs_out = StreamResampler(self.s.model_sr, rate)
+
     async def _on_control(self, msg: dict) -> None:
         kind = msg.get("type")
         if kind == "start":
-            self.src_rate = int(msg.get("sampleRate") or self.s.model_sr)
+            self._set_rate(int(msg.get("sampleRate") or self.s.model_sr))
             await self._send({"type": "started", "model_sr": self.s.model_sr})
         elif kind == "enroll_start":
             name = str(msg.get("name") or "").strip()
@@ -94,9 +101,20 @@ class ClientSession:
         elif kind == "target":
             name = msg.get("name")
             self.target_name = name
-            self.target_emb = self.profiles.embeddings().get(name)
+            self.target = self.profiles.get(name)
+            # Picking a voice implies clone-to-that-voice.
+            set_fx = getattr(self.conv, "set_effect", None)
+            if set_fx:
+                set_fx("clone")
             await self._send({"type": "target_set", "name": name,
-                              "found": self.target_emb is not None})
+                              "found": self.target is not None})
+            await self._send({"type": "effect_set", "name": "clone"})
+        elif kind == "effect":
+            name = str(msg.get("name") or "clean")
+            set_fx = getattr(self.conv, "set_effect", None)
+            if set_fx:
+                set_fx(name)
+            await self._send({"type": "effect_set", "name": name})
         elif kind == "ping":
             await self._send({"type": "pong"})
         elif kind == "stop":
@@ -149,9 +167,13 @@ class ClientSession:
                               "name": name, "error": "clip too short/quiet"})
             return
         emb = await asyncio.to_thread(self.model.embed, clip)
-        self.profiles.add(name, emb)
+        f0 = None
+        analyze = getattr(self.model, "analyze_clip", None)
+        if analyze:
+            f0 = (await asyncio.to_thread(analyze, clip)).get("f0")
+        self.profiles.add(name, emb, f0)
         await self._send({"type": "enrolled", "ok": True, "name": name,
-                          "profiles": self.profiles.names()})
+                          "f0": f0, "profiles": self.profiles.names()})
 
     async def _send(self, payload: dict) -> None:
         try:

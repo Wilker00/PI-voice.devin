@@ -81,6 +81,12 @@ def test_ws_enroll_then_identify(app):
         ws.send_text(json.dumps({"type": "target", "name": "robbie"}))
         t = recv_until(ws, "target_set")
         assert t["name"] == "robbie" and t["found"] is True
+        # target selection auto-switches the converter to clone mode
+        fx = recv_until(ws, "effect_set")
+        assert fx["name"] == "clone"
+        # manual effect switch works too
+        ws.send_text(json.dumps({"type": "effect", "name": "deep"}))
+        assert recv_until(ws, "effect_set")["name"] == "deep"
         # keep streaming the same voice -> should eventually match "robbie"
         for _ in range(6):
             push_pcm(ws, tone(0.3))

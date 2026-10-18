@@ -33,10 +33,15 @@ def get_stats() -> dict:
     throttled_raw = _vcgencmd("get_throttled")  # "throttled=0x50000"
     throttled_hex = None
     throttled = None
+    throttled_since_boot = None
     if throttled_raw and "=" in throttled_raw:
         throttled_hex = throttled_raw.split("=", 1)[1]
         try:
-            throttled = int(throttled_hex, 16) != 0
+            bits = int(throttled_hex, 16)
+            # Bits 0-3: under-voltage/capped/throttled/soft-temp-limit *now*.
+            # Bits 16-19: the same conditions *have occurred* since boot.
+            throttled = bits & 0xF != 0
+            throttled_since_boot = bits & 0xF0000 != 0
         except ValueError:
             pass
 
@@ -56,6 +61,7 @@ def get_stats() -> dict:
         "on_pi": temp_raw is not None,
         "temp_c": _parse_temp(temp_raw),
         "throttled": throttled,
+        "throttled_since_boot": throttled_since_boot,
         "throttled_hex": throttled_hex,
         "load1": load1,
         "uptime_s": uptime_s,

@@ -1,0 +1,18 @@
+# Template — pi/setup.sh --service fills @USER@/@DIR@ and installs it.
+[Unit]
+Description=PI Voice (FastAPI + uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+SupplementaryGroups=video
+WorkingDirectory=@DIR@
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=@DIR@/start.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
