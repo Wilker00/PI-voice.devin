@@ -122,22 +122,25 @@ class ClientSession:
             await self._cancel_prepare_and_report()
             self.target_name = name
             self.target = self.profiles.get(name)
-            # Keep audio immediate while a custom clone implementation warms.
-            self._set_effect(self._last_character_effect)
+            # Keep audio immediate while a custom clone implementation warms:
+            # whatever is playing stays — only a live clone can't continue,
+            # because its target just changed under it.
+            if self.effect == "clone":
+                self._set_effect(self._last_character_effect)
+                await self._send({"type": "effect_set",
+                                  "name": self._last_character_effect})
             await self._send({"type": "target_set", "name": name,
                               "found": self.target is not None})
-            await self._send({"type": "effect_set",
-                              "name": self._last_character_effect})
             if self.target is None:
                 await self._send({
                     "type": "transform_state", "phase": "fallback",
-                    "target": name, "fallback": self._last_character_effect,
+                    "target": name, "fallback": self.effect,
                     "reason": "error",
                 })
                 return
             await self._send({
                 "type": "transform_state", "phase": "preparing",
-                "target": name, "fallback": self._last_character_effect,
+                "target": name, "fallback": self.effect,
             })
             self._transform_generation += 1
             generation = self._transform_generation
@@ -184,7 +187,7 @@ class ClientSession:
                 await self._send({
                     "type": "transform_state", "phase": "fallback",
                     "target": name,
-                    "fallback": self._last_character_effect,
+                    "fallback": self.effect,
                     "reason": "timeout",
                 })
         except Exception:
@@ -193,7 +196,7 @@ class ClientSession:
                 await self._send({
                     "type": "transform_state", "phase": "fallback",
                     "target": name,
-                    "fallback": self._last_character_effect,
+                    "fallback": self.effect,
                     "reason": "error",
                 })
         finally:
@@ -261,8 +264,16 @@ class ClientSession:
         if rms < self.s.silence_rms:
             speaker, conf = None, 0.0
         elif identify is not None:
-            label, conf = await asyncio.to_thread(
-                identify, window, self.profiles.embeddings())
+            try:
+                label, conf = await asyncio.to_thread(
+                    identify, window, self.profiles.embeddings())
+            except Exception as exc:
+                # A misbehaving model must not take the session down.
+                log.exception("identify failed")
+                await self._send({"type": "result", "speaker": None,
+                                  "confidence": 0.0, "final": final,
+                                  "error": f"identify: {exc}"})
+                return
             speaker = label if conf >= self.s.conf_threshold else "unknown"
         else:
             speaker, conf = self.target_name, 0.0

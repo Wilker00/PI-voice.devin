@@ -29,7 +29,8 @@ from typing import Protocol
 
 import numpy as np
 
-from .dsp import PitchShifter, RingMod, estimate_f0, megaphone
+from .dsp import (PitchShifter, RingMod, estimate_f0, estimate_f0_median,
+                  megaphone)
 
 log = logging.getLogger("pi_voice.model")
 
@@ -45,7 +46,7 @@ def _features(pcm: np.ndarray, sr: int) -> np.ndarray:
     """Lightweight voice-ish fingerprint: RMS, ZCR, spectral centroid,
     and log-band energies of the magnitude spectrum."""
     if pcm.size < 256:
-        return np.zeros(2 + _BANDS, dtype=np.float32)
+        return np.zeros(3 + _BANDS, dtype=np.float32)
     pcm = pcm - np.mean(pcm)
     rms = float(np.sqrt(np.mean(pcm ** 2)))
     zcr = float(np.mean(np.abs(np.diff(np.signbit(pcm)).astype(np.float32))))
@@ -125,7 +126,7 @@ class VoiceChangerModel:
         return v / (np.linalg.norm(v) + _EPS)
 
     def analyze_clip(self, pcm: np.ndarray) -> dict:
-        return {"f0": estimate_f0(pcm, self.sr)}
+        return {"f0": estimate_f0_median(pcm, self.sr)}
 
     def identify(self, pcm: np.ndarray,
                  profiles: dict[str, np.ndarray]) -> tuple[str, float]:
@@ -135,6 +136,8 @@ class VoiceChangerModel:
         best_name, best_sim = "unknown", 0.0
         for name, emb in profiles.items():
             emb = np.asarray(emb, dtype=np.float32)
+            if emb.shape != v.shape:   # foreign model's profiles: skip
+                continue
             sim = float(np.dot(v, emb) /
                         ((np.linalg.norm(v) + _EPS) * (np.linalg.norm(emb) + _EPS)))
             if sim > best_sim:

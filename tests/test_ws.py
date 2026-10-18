@@ -84,7 +84,7 @@ def test_ws_enroll_then_identify(app):
         ws.send_text(json.dumps({"type": "target", "name": "robbie"}))
         t = recv_until(ws, "target_set")
         assert t["name"] == "robbie" and t["found"] is True
-        # clone path: fallback effect keeps audio live while preparing,
+        # clone path: current effect keeps playing while preparing,
         # then the transform flips to clone + ready once prepared
         seen = {"fx": [], "phases": []}
         for _ in range(40):
@@ -100,8 +100,7 @@ def test_ws_enroll_then_identify(app):
                 break
         assert "preparing" in seen["phases"]
         assert "ready" in seen["phases"]
-        assert seen["fx"][0] == "robot"
-        assert seen["fx"][-1] == "clone"
+        assert seen["fx"] == ["clone"]
         # manual effect switch works too
         ws.send_text(json.dumps({"type": "effect", "name": "deep"}))
         assert recv_until(ws, "effect_set")["name"] == "deep"
@@ -121,14 +120,14 @@ def test_api_endpoints(app):
     assert client.get("/api/profiles").json() == {"profiles": []}
 
 
-def test_missing_clone_target_stays_on_robot_fallback(app):
+def test_missing_clone_target_keeps_current_effect(app):
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "target", "name": "missing"}))
         assert recv_until(ws, "target_set")["found"] is False
-        assert recv_until(ws, "effect_set")["name"] == "robot"
         fallback = recv_until(ws, "transform_state")
         assert fallback["phase"] == "fallback"
+        assert fallback["fallback"] == "clean"
         assert fallback["reason"] == "error"
 
 
@@ -235,7 +234,6 @@ def test_clone_preparation_keeps_chunk_dsp_live(monkeypatch, tmp_path):
     with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "target", "name": "alex"}))
         assert recv_until(ws, "target_set")["found"] is True
-        assert recv_until(ws, "effect_set")["name"] == "robot"
         assert recv_until(ws, "transform_state")["phase"] == "preparing"
         ws.send_bytes(float32_to_pcm16(tone(0.1)))
         assert recv_bytes(ws)
@@ -255,7 +253,7 @@ def test_clone_preparation_falls_back(monkeypatch, tmp_path, failure, reason):
         assert recv_until(ws, "transform_state")["phase"] == "preparing"
         fallback = recv_until(ws, "transform_state")
         assert fallback["phase"] == "fallback"
-        assert fallback["fallback"] == "robot"
+        assert fallback["fallback"] == "clean"
         assert fallback["reason"] == reason
         assert "clone" not in stream.effects
 
@@ -277,6 +275,30 @@ def test_new_target_cancels_obsolete_clone(monkeypatch, tmp_path):
         assert recv_until(ws, "effect_set")["name"] == "clone"
         ready = recv_until(ws, "transform_state")
         assert ready["phase"] == "ready" and ready["target"] == "sam"
+
+
+def test_target_switch_preserves_interim_effect(monkeypatch, tmp_path):
+    stream = PreparingStream(delay=0.25)
+    client = TestClient(app_with_preparer(
+        monkeypatch, tmp_path, stream, timeout=0.6,
+        profiles=("alex", "sam")))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "effect", "name": "deep"}))
+        assert recv_until(ws, "effect_set")["name"] == "deep"
+        # on a character effect: it stays live while clone warms
+        ws.send_text(json.dumps({"type": "target", "name": "alex"}))
+        assert recv_until(ws, "target_set")["found"] is True
+        prep = recv_until(ws, "transform_state")
+        assert prep["phase"] == "preparing" and prep["fallback"] == "deep"
+        assert recv_until(ws, "effect_set")["name"] == "clone"
+        assert recv_until(ws, "transform_state")["phase"] == "ready"
+        # now cloned to alex: picking sam can't keep the stale clone live,
+        # so it drops to the last character effect while preparing
+        ws.send_text(json.dumps({"type": "target", "name": "sam"}))
+        assert recv_until(ws, "effect_set")["name"] == "deep"
+        assert recv_until(ws, "target_set")["name"] == "sam"
+        assert recv_until(ws, "transform_state")["phase"] == "preparing"
+        assert recv_until(ws, "effect_set")["name"] == "clone"
 
 
 def test_manual_effect_cancels_clone_handoff(monkeypatch, tmp_path):
@@ -304,3 +326,38 @@ def test_disconnect_cancels_clone_handoff(monkeypatch, tmp_path):
         assert recv_until(ws, "transform_state")["phase"] == "preparing"
     time.sleep(0.3)
     assert "clone" not in stream.effects
+
+
+def test_identify_failure_does_not_kill_session(monkeypatch, tmp_path):
+    class BadIdentify:
+        def open_stream(self):
+            return PreparingStream()
+
+        def embed(self, pcm):
+            return np.ones(11, dtype=np.float32)
+
+        def identify(self, pcm, profiles):
+            raise RuntimeError("boom")
+
+    import server.main as main_module
+    monkeypatch.setattr(main_module, "load_model", lambda: BadIdentify())
+    settings = Settings(
+        host="127.0.0.1", port=0, model_sr=16000,
+        buffer_seconds=4, window_sec=0.25, hop_sec=0.1,
+        enroll_seconds=0.5, model_module=None,
+        conf_threshold=0.3, silence_rms=0.001,
+        clone_prepare_timeout_sec=0.25,
+        profiles_path=tmp_path / "profiles.json",
+        web_dir=REPO_ROOT / "web",
+    )
+    client = TestClient(create_app(settings))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "start", "sampleRate": 16000}))
+        recv_until(ws, "started")
+        push_pcm(ws, tone(1.0))
+        for _ in range(2):   # infer loop survives and keeps reporting
+            r = recv_until(ws, "result")
+            assert r["speaker"] is None
+            assert r["error"].startswith("identify:")
+        ws.send_text(json.dumps({"type": "ping"}))
+        assert recv_until(ws, "pong")["type"] == "pong"

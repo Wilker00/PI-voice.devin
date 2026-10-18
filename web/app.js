@@ -14,6 +14,34 @@ const EFFECT_LABELS = Object.freeze({
 const TAKEOVER_MS = reduceMotion ? 150 : 1200;
 const PERSONA_MS = 4500;
 
+// Identity-intercept running gag: each breach pulls a fresh roast alias
+// for whoever the classifier caught. The HUD keeps the real name; only
+// the takeover theater wears the joke.
+const ROASTS = Object.freeze([
+  'THREE KIDS IN A TRENCH COAT',
+  'THE HUMAN DIAL TONE',
+  'A PARROT WITH ROOT ACCESS',
+  'MODEM NOISE WITH OPINIONS',
+  'THE DIAL-UP BANSHEE',
+  'CERTIFIED VOICE GREMLIN',
+  'ONE (1) SUSPICIOUS VOCAL CORD',
+  'MOSTLY HOLD MUSIC',
+  'THE ECHO\'S MANAGER',
+  '{name} (ALLEGEDLY)',
+  'NOT {name} (PROBABLY)',
+  '{name} FROM A PARALLEL DIMENSION',
+]);
+let lastRoast = '';
+function pickRoast(name) {
+  let gag = lastRoast;
+  for (let tries = 0; tries < 8 && gag === lastRoast; tries += 1) {
+    const t = ROASTS[(Math.random() * ROASTS.length) | 0];
+    gag = t.replaceAll('{name}', name.toUpperCase());
+  }
+  lastRoast = gag;
+  return gag;
+}
+
 let ws = null;
 let audioCtx = null;
 let micOn = false;
@@ -27,12 +55,12 @@ let micTrack = null;
 let micSource = null;
 let workletNode = null;
 
-// playback chain: converted audio -> gate -> limiter -> 75% cap -> speaker
+// playback chain: converted audio -> jitter buffer + smooth gate (worklet)
+// -> limiter -> 75% cap -> speaker
 const OUT_GAIN = 0.75;   // fixed cap: keeps phone-speaker feedback tame
-const GATE_RMS = 0.004;  // last-stage noise gate (~-48 dBFS)
 let limiter = null;
 let outGain = null;
-let nextPlayTime = 0;
+let playNode = null;
 let activeTarget = null;
 let activeEffect = 'clean';
 let lastCharacterEffect = 'robot';
@@ -98,6 +126,8 @@ function unlockSessionModules() {
   });
 }
 
+let wsFailures = 0;
+
 function connectWS() {
   if (!micOn) return;
   setStageState('CONNECTING', false);
@@ -107,11 +137,20 @@ function connectWS() {
     $('hud-ws').textContent = 'ON';
     $('hud-ws').dataset.state = 'on';
     setStageState('LIVE', true);
-    nextPlayTime = 0;                 // drop stale schedule after reconnect
+    playNode?.port.postMessage({ type: 'reset' }); // drop stale audio
     if (audioCtx.state === 'suspended') audioCtx.resume();
     send({ type: 'start', sampleRate: audioCtx.sampleRate });
   };
+  const opened = { value: false };
+  ws.addEventListener('open', () => { opened.value = true; wsFailures = 0; });
   ws.onclose = () => {
+    // Say why instead of silently retrying: the usual cause is a page that
+    // was opened as a file or from a preview server with no /ws behind it.
+    if (!opened.value && micOn && wsFailures++ % 5 === 0) {
+      showError(location.protocol === 'file:'
+        ? 'No server: open the page from the PI Voice server (e.g. http://localhost:3000), not as a file.'
+        : `Can't reach the PI Voice server at ${wsURL()} — is it running on this address/port?`);
+    }
     $('hud-ws').textContent = 'OFF';
     $('hud-ws').dataset.state = 'off';
     setStageState(micOn ? 'RECONNECTING' : 'STANDBY', false);
@@ -216,8 +255,9 @@ function beginIdentitySequence(identity) {
   clearTimeout(queuedLaunchTimer);
   clearTimeout(takeoverTimer);
   clearTimeout(personaTimer);
+  identity.gag = pickRoast(identity.name);
   personaIdentity = identity;
-  $('breach-identity').textContent = identity.name.toUpperCase();
+  $('breach-identity').textContent = identity.gag;
   setPresentation('crashing');
   takeoverTimer = setTimeout(showPersona, TAKEOVER_MS);
 }
@@ -226,7 +266,7 @@ function showPersona() {
   setPresentation('persona');
   updatePersona();
   const route = personaDestination();
-  announce(`${personaIdentity.name} identified. ${route} transformation active.`);
+  announce(`${personaIdentity.name} identified as ${personaIdentity.gag}. ${route} transformation active.`);
   restartPersonaTimer();
 }
 
@@ -263,7 +303,7 @@ function personaDestination() {
 
 function updatePersona() {
   if (!personaIdentity) return;
-  $('persona-source').textContent = personaIdentity.name;
+  $('persona-source').textContent = personaIdentity.gag || personaIdentity.name;
   $('persona-destination').textContent = personaDestination();
   $('persona-confidence').textContent = `${personaIdentity.confidence}%`;
   $('persona-latency').textContent = `${personaIdentity.latency} ms`;
@@ -306,7 +346,7 @@ async function startMic() {
     workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
     workletNode.port.onmessage = (e) => onPCM(e.data);
 
-    // playback chain: gate (per frame) -> limiter -> fixed 75% gain
+    // playback chain: jitter buffer + gate -> limiter -> fixed 75% gain
     limiter = audioCtx.createDynamicsCompressor();
     limiter.threshold.value = -6;
     limiter.knee.value = 0;
@@ -317,6 +357,15 @@ async function startMic() {
     outGain.gain.value = OUT_GAIN;
     limiter.connect(outGain);
     outGain.connect(audioCtx.destination);
+    playNode = new AudioWorkletNode(audioCtx, 'playback-processor', {
+      numberOfInputs: 0, outputChannelCount: [1],
+    });
+    playNode.port.onmessage = (e) => {
+      const s = e.data;   // ~1/s: buffer depth + gap counters
+      $('hud-aud').title = `buffer ${s.bufferedMs}/${s.cushionMs} ms`
+        + ` · gaps ${s.underruns} · latency trims ${s.trimmed}`;
+    };
+    playNode.connect(limiter);
 
     const mute = audioCtx.createGain(); // keep worklet alive, no feedback
     mute.gain.value = 0;
@@ -382,25 +431,11 @@ function onPlayback(arrayBuffer) {
   if (audioCtx.state === 'suspended') audioCtx.resume();
   rxFrames += 1;
   if (rxFrames % 10 === 0) $('hud-aud').textContent = `${rxFrames}f`;
+  if (!playNode) return;
   const pcm = new Int16Array(arrayBuffer);
-  let sum = 0;
-  for (let i = 0; i < pcm.length; i += 4) {
-    const v = pcm[i] / 32768;
-    sum += v * v;
-  }
-  const rms = Math.sqrt(sum / Math.max(1, pcm.length / 4));
   const f32 = new Float32Array(pcm.length);
-  if (rms >= GATE_RMS) {                 // gate: silence below threshold
-    for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
-  }
-  const buf = audioCtx.createBuffer(1, f32.length, audioCtx.sampleRate);
-  buf.copyToChannel(f32, 0);
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-  src.connect(limiter);                  // limiter -> 75% cap -> speaker
-  const t = Math.max(audioCtx.currentTime + 0.03, nextPlayTime);
-  src.start(t);
-  nextPlayTime = t + buf.duration;
+  for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+  playNode.port.postMessage(f32, [f32.buffer]);   // gate + timing in worklet
 }
 
 function onPCM(arrayBuffer) {

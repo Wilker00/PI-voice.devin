@@ -97,3 +97,17 @@ def test_breach_persona_contract():
     assert '.breach-takeover[data-active="true"]' in css
     assert '.app-shell[data-presentation="persona"]' in css
     assert "@keyframes breachJolt" in css
+
+
+def test_identity_roast_contract():
+    """The takeover shows a rotating roast alias, not the true name."""
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("const ROASTS"):js.index("]);")]
+    roasts = re.findall(r"'((?:[^'\\]|\\.)+)'", block)
+    assert len(roasts) >= 8
+    assert any("{name}" in r for r in roasts)
+    assert "pickRoast" in js
+    assert "personaIdentity.gag" in js
+    # real name still lands in the HUD, gag only in the takeover
+    assert "el.textContent = msg.speaker" in js
+    assert "$('breach-identity').textContent = identity.gag" in js
