@@ -9,7 +9,8 @@ import time
 import numpy as np
 from starlette.websockets import WebSocket
 
-from .audio import RingBuffer, pcm16_to_float32, resample_linear
+from .audio import (RingBuffer, float32_to_pcm16, pcm16_to_float32,
+                    resample_linear)
 from .config import Settings
 from .profiles import ProfileStore
 
@@ -26,6 +27,8 @@ class ClientSession:
         self.ring = RingBuffer(settings.buffer_samples)
         self.src_rate = settings.model_sr  # until client reports otherwise
         self.enrolling: str | None = None
+        self.target_name: str | None = None
+        self.target_emb: np.ndarray | None = None
         self._stop = asyncio.Event()
 
     async def run(self) -> None:
@@ -45,18 +48,32 @@ class ClientSession:
             if msg["type"] == "websocket.disconnect":
                 return
             if (data := msg.get("bytes")) is not None:
-                self._on_pcm(data)
+                await self._on_pcm(data)
             elif (text := msg.get("text")) is not None:
                 try:
                     await self._on_control(json.loads(text))
                 except (ValueError, KeyError) as exc:
                     await self._send({"type": "error", "message": str(exc)})
 
-    def _on_pcm(self, data: bytes) -> None:
+    async def _on_pcm(self, data: bytes) -> None:
         pcm = pcm16_to_float32(data)
         if self.src_rate != self.s.model_sr:
             pcm = resample_linear(pcm, self.src_rate, self.s.model_sr)
         self.ring.write(pcm)
+        # Per-chunk conversion keeps the speaker loop low-latency.
+        # While enrolling we buffer only — no playback to feed back.
+        convert = getattr(self.model, "convert", None)
+        if convert is None or self.enrolling:
+            return
+        out = await asyncio.to_thread(convert, pcm, self.target_emb)
+        if out is None or out.size == 0:
+            return
+        if self.src_rate != self.s.model_sr:
+            out = resample_linear(out, self.s.model_sr, self.src_rate)
+        try:
+            await self.ws.send_bytes(float32_to_pcm16(out))
+        except Exception:
+            self._stop.set()
 
     async def _on_control(self, msg: dict) -> None:
         kind = msg.get("type")
@@ -74,6 +91,12 @@ class ClientSession:
             await self._finish_enrollment()
         elif kind == "final":
             await self._classify(final=True)
+        elif kind == "target":
+            name = msg.get("name")
+            self.target_name = name
+            self.target_emb = self.profiles.embeddings().get(name)
+            await self._send({"type": "target_set", "name": name,
+                              "found": self.target_emb is not None})
         elif kind == "ping":
             await self._send({"type": "pong"})
         elif kind == "stop":
@@ -94,12 +117,15 @@ class ClientSession:
             return
         rms = float(np.sqrt(np.mean(window ** 2)))
         t0 = time.perf_counter()
+        identify = getattr(self.model, "identify", None)
         if rms < self.s.silence_rms:
             speaker, conf = None, 0.0
-        else:
+        elif identify is not None:
             label, conf = await asyncio.to_thread(
-                self.model.identify, window, self.profiles.embeddings())
+                identify, window, self.profiles.embeddings())
             speaker = label if conf >= self.s.conf_threshold else "unknown"
+        else:
+            speaker, conf = self.target_name, 0.0
         latency = (time.perf_counter() - t0) * 1000.0
         await self._send({
             "type": "result",

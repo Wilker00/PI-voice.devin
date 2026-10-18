@@ -68,7 +68,11 @@ main { flex: 1; padding: 8px 16px 16px; }
   background: var(--panel); border: 1px solid #30363d; border-radius: 8px;
   padding: 8px 12px; margin: 6px 0; font-size: .95rem;
 }
+#profiles li { cursor: pointer; }
+#profiles li.active { border-color: var(--accent); color: var(--accent); }
 #profiles .del { background: none; border: none; color: var(--bad); font-size: 1rem; cursor: pointer; }
+.hint { color: var(--dim); font-size: .8rem; margin-bottom: 4px; }
+.aec { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 
 #hud {
   display: flex; gap: 18px; justify-content: center; padding: 10px;

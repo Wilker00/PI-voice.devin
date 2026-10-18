@@ -9,6 +9,20 @@ let micOn = false;
 let enrolling = false;
 let enrollTimer = null;
 
+// mic pipeline refs (needed to toggle AEC live)
+let micStream = null;
+let micTrack = null;
+let micSource = null;
+let workletNode = null;
+
+// playback chain: converted audio -> gate -> limiter -> 75% cap -> speaker
+const OUT_GAIN = 0.75;   // fixed cap: keeps phone-speaker feedback tame
+const GATE_RMS = 0.004;  // last-stage noise gate (~-48 dBFS)
+let limiter = null;
+let outGain = null;
+let nextPlayTime = 0;
+let activeTarget = null;
+
 // small display-only ring of recent samples for the waveform canvas
 const VIS_LEN = 8192;
 const visBuf = new Float32Array(VIS_LEN);
@@ -51,10 +65,12 @@ function connectWS() {
   };
   ws.onerror = () => ws.close();
   ws.onmessage = (ev) => {
+    if (typeof ev.data !== 'string') { onPlayback(ev.data); return; }
     const msg = JSON.parse(ev.data);
     if (msg.type === 'result') onResult(msg);
     else if (msg.type === 'enroll_started') onEnrollStarted(msg);
     else if (msg.type === 'enrolled') onEnrolled(msg);
+    else if (msg.type === 'target_set') onTargetSet(msg);
     else if (msg.type === 'error') showError(msg.message);
   };
 }
@@ -76,26 +92,50 @@ function onResult(msg) {
 }
 
 /* ---------------- mic pipeline ---------------- */
+// AEC defaults ON (feedback plan): the phone speaker is the far-end
+// reference, so converted audio gets cancelled while your voice survives.
+// NS/AGC stay off — they mangle voice identity.
+function micConstraints(aec) {
+  return {
+    audio: {
+      echoCancellation: aec,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+    },
+  };
+}
+
 async function startMic() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 1,
-      },
-    });
     audioCtx = new AudioContext();
     await audioCtx.audioWorklet.addModule('audio-worklet.js');
-    const src = audioCtx.createMediaStreamSource(stream);
-    const node = new AudioWorkletNode(audioCtx, 'pcm-processor');
-    node.port.onmessage = (e) => onPCM(e.data);
+
+    micStream = await navigator.mediaDevices.getUserMedia(
+      micConstraints($('aec').checked));
+    micTrack = micStream.getAudioTracks()[0];
+    micSource = audioCtx.createMediaStreamSource(micStream);
+    workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
+    workletNode.port.onmessage = (e) => onPCM(e.data);
+
+    // playback chain: gate (per frame) -> limiter -> fixed 75% gain
+    limiter = audioCtx.createDynamicsCompressor();
+    limiter.threshold.value = -6;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.25;
+    outGain = audioCtx.createGain();
+    outGain.gain.value = OUT_GAIN;
+    limiter.connect(outGain);
+    outGain.connect(audioCtx.destination);
+
     const mute = audioCtx.createGain(); // keep worklet alive, no feedback
     mute.gain.value = 0;
-    src.connect(node);
-    node.connect(mute);
+    micSource.connect(workletNode);
+    workletNode.connect(mute);
     mute.connect(audioCtx.destination);
+
     micOn = true;
     connectWS();
     $('btn-mic').textContent = 'Mic live';
@@ -106,6 +146,57 @@ async function startMic() {
   } catch (err) {
     showError(`getUserMedia failed: ${err.name} ${err.message}`);
   }
+}
+
+// AEC toggle: try live applyConstraints; fall back to a mic restart.
+async function setAEC(on) {
+  if (!micTrack) return;
+  try {
+    await micTrack.applyConstraints({ echoCancellation: on });
+    if (micTrack.getSettings().echoCancellation === on) return;
+    throw new Error('constraint not applied');
+  } catch {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(
+        micConstraints(on));
+      const track = stream.getAudioTracks()[0];
+      const src = audioCtx.createMediaStreamSource(stream);
+      micSource.disconnect();
+      micTrack.stop();
+      micStream = stream;
+      micTrack = track;
+      micSource = src;
+      src.connect(workletNode);
+    } catch (err) {
+      showError(`AEC toggle failed: ${err.message}`);
+      $('aec').checked = !on;
+    }
+  }
+}
+$('aec').addEventListener('change', (e) => setAEC(e.target.checked));
+
+/* ---------------- speaker playback ---------------- */
+function onPlayback(arrayBuffer) {
+  if (!audioCtx) return;
+  const pcm = new Int16Array(arrayBuffer);
+  let sum = 0;
+  for (let i = 0; i < pcm.length; i += 4) {
+    const v = pcm[i] / 32768;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / Math.max(1, pcm.length / 4));
+  const f32 = new Float32Array(pcm.length);
+  if (rms >= GATE_RMS) {                 // gate: silence below threshold
+    for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+  }
+  const buf = audioCtx.createBuffer(1, f32.length, audioCtx.sampleRate);
+  buf.copyToChannel(f32, 0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(limiter);                  // limiter -> 75% cap -> speaker
+  const t = Math.max(audioCtx.currentTime + 0.03, nextPlayTime);
+  src.start(t);
+  nextPlayTime = t + buf.duration;
 }
 
 function onPCM(arrayBuffer) {
@@ -167,6 +258,12 @@ function onEnrolled(msg) {
   if (msg.ok) refreshProfiles();
 }
 
+function onTargetSet(msg) {
+  activeTarget = msg.name;
+  refreshProfiles();
+  if (!msg.found) showError(`no voice profile for "${msg.name}" — converting raw`);
+}
+
 async function refreshProfiles() {
   try {
     const res = await fetch('/api/profiles');
@@ -175,15 +272,18 @@ async function refreshProfiles() {
     ul.innerHTML = '';
     for (const name of profiles) {
       const li = document.createElement('li');
+      if (name === activeTarget) li.classList.add('active');
       const span = document.createElement('span');
       span.textContent = name;
       const del = document.createElement('button');
       del.className = 'del';
       del.textContent = '×';
-      del.onclick = async () => {
+      del.onclick = async (e) => {
+        e.stopPropagation();
         await fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
         refreshProfiles();
       };
+      li.onclick = () => send({ type: 'target', name });
       li.append(span, del);
       ul.append(li);
     }

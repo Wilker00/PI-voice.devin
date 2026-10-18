@@ -14,6 +14,7 @@ ssh hacker3@pi-03.local
 | Setting | Value |
 | --- | --- |
 | Device hostname | `pi-03.local` |
+| Known IP (team network) | `10.104.0.55` |
 | SSH user | `hacker3` |
 | Service | SSH on port `22` |
 | Primary command | `ssh hacker3@pi-03.local` |

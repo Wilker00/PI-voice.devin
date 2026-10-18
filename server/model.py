@@ -1,14 +1,16 @@
 """Speaker-model adapter.
 
-The real model (a teammate's component) is plugged in by setting MODEL_MODULE
-to a Python module that exposes either a `load()` function returning an object
-with `embed(pcm)` / `identify(pcm, profiles)`, or those functions directly.
+The real voice-conversion model (a teammate's component) is plugged in by
+setting MODEL_MODULE to a Python module exposing either a `load()` function
+returning an object with these methods, or the functions directly:
 
-`embed(pcm_f32_16k)  -> 1-D embedding ndarray`
-`identify(pcm_f32_16k, profiles: dict[str, ndarray]) -> (label, confidence)`
+`embed(pcm_f32_16k) -> 1-D embedding ndarray`          (enrollment clip)
+`convert(pcm_f32_16k, target_emb|None) -> pcm_f32`     (voice conversion)
+`identify(pcm_f32_16k, profiles) -> (label, conf)`     (optional; who is talking)
 
-Until then, StubModel exercises the full pipeline with numpy spectral
-features and cosine-similarity matching.
+Until then, StubModel exercises the full pipeline: cosine-similarity
+identification over spectral features, plus a stateless "megaphone"
+convert() so converted audio is audible end-to-end on the phone speaker.
 """
 from __future__ import annotations
 
@@ -51,12 +53,16 @@ def _features(pcm: np.ndarray, sr: int) -> np.ndarray:
 
 class SpeakerModel(Protocol):
     def embed(self, pcm: np.ndarray) -> np.ndarray: ...
+    def convert(self, pcm: np.ndarray,
+                target: np.ndarray | None) -> np.ndarray: ...
     def identify(self, pcm: np.ndarray,
                  profiles: dict[str, np.ndarray]) -> tuple[str, float]: ...
 
 
 class StubModel:
-    """Placeholder speaker-ID model: cosine similarity over _features()."""
+    """Placeholder: cosine-similarity ID over _features(), and a stateless
+    'megaphone' conversion (tanh grit + 5-tap smoothing) so the audio
+    round-trip is audible until the real VC model lands."""
 
     def __init__(self, sr: int = 16000):
         self.sr = sr
@@ -64,6 +70,14 @@ class StubModel:
     def embed(self, pcm: np.ndarray) -> np.ndarray:
         v = _features(pcm, self.sr)
         return v / (np.linalg.norm(v) + _EPS)
+
+    def convert(self, pcm: np.ndarray,
+                target: np.ndarray | None = None) -> np.ndarray:
+        if pcm.size == 0:
+            return pcm
+        y = np.tanh(2.5 * pcm)
+        y = np.convolve(y, np.ones(5) / 5.0, mode="same")
+        return (0.8 * y).astype(np.float32)
 
     def identify(self, pcm: np.ndarray,
                  profiles: dict[str, np.ndarray]) -> tuple[str, float]:
