@@ -181,4 +181,4 @@ real model is for. All effects are stateful per-client via `open_stream()`.
 
 `HOST` `PORT` `MODEL_SR` `BUFFER_SECONDS` `WINDOW_SEC` `HOP_SEC`
 `ENROLL_SECONDS` `CONF_THRESHOLD` `SILENCE_RMS` `PROFILES_PATH` `WEB_DIR`
-`MODEL_MODULE`
+`MODEL_MODULE` `CLONE_PREPARE_TIMEOUT_SEC` (defaults to 15 seconds)

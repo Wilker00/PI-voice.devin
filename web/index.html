@@ -13,7 +13,37 @@
   <div class="grain-layer" aria-hidden="true"></div>
   <canvas id="rain" aria-hidden="true"></canvas>
 
-  <div class="app-shell" id="app-shell" data-session="idle">
+  <div id="breach-takeover" class="breach-takeover" aria-hidden="true">
+    <div class="breach-noise"></div>
+    <div class="breach-frame">
+      <div class="breach-terminal">
+        <span>FAULT // UI_PROCESS</span>
+        <span>LOCAL AUDIO REMAINS ACTIVE</span>
+      </div>
+      <div class="breach-figure">
+        <svg viewBox="0 0 240 280" focusable="false">
+          <path class="hood-outer" d="M120 18C74 20 38 55 30 112L12 244h216l-18-132c-8-57-44-92-90-94Z"/>
+          <path class="hood-inner" d="M120 48c-37 0-64 35-62 83l8 78h108l8-78c2-48-25-83-62-83Z"/>
+          <path class="mask-plane" d="m78 113 18-28h48l18 28-9 69-33 23-33-23-9-69Z"/>
+          <path class="mask-detail" d="m91 126 18 6m40-6-18 6m-24 40h26m-13-68v68"/>
+          <path class="hood-trace" d="M31 227h51l18 17h40l18-17h51"/>
+        </svg>
+      </div>
+      <div class="breach-copy">
+        <p>[ ACCESS EVENT / <span id="breach-identity">UNKNOWN</span> ]</p>
+        <strong data-text="IDENTITY INTERCEPT">IDENTITY INTERCEPT</strong>
+        <span>RENDER PROCESS REPLACED</span>
+      </div>
+      <div class="breach-log">
+        <span>01  BUFFER_ROUTE ........ PRESERVED</span>
+        <span>02  VOICEPRINT .......... ACQUIRED</span>
+        <span>03  PERSONA_LAYER ....... LOADING</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-shell" id="app-shell" data-session="idle" data-presentation="console">
+    <div id="sr-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <header class="system-header boot-item">
       <a class="brand" href="/" aria-label="Pi Voice home">
         <span class="brand-mark" aria-hidden="true">
@@ -89,10 +119,26 @@
             <div class="neon-floor" aria-hidden="true"></div>
             <canvas id="wave" width="900" height="260" aria-hidden="true"></canvas>
             <div class="scan-sweep" aria-hidden="true"></div>
-            <div class="orb-copy">
+            <div id="monitor-default" class="orb-copy">
               <span class="orb-label">Now hearing</span>
               <div id="speaker" class="unknown">Off air</div>
               <span id="confidence-readout">Waiting for voice</span>
+            </div>
+            <div id="persona-monitor" class="persona-monitor" aria-hidden="true">
+              <div class="persona-heading">
+                <span>Identity route</span>
+                <strong id="persona-status">DSP ACTIVE</strong>
+              </div>
+              <div class="persona-route">
+                <span id="persona-source">UNKNOWN</span>
+                <svg viewBox="0 0 70 22" aria-hidden="true"><path d="M1 11h62M54 3l9 8-9 8"/></svg>
+                <span id="persona-destination">ROBOT</span>
+              </div>
+              <div class="persona-data">
+                <span><small>Match</small><output id="persona-confidence">--</output></span>
+                <span><small>Latency</small><output id="persona-latency">--</output></span>
+                <span><small>Input</small><output id="persona-level">00</output></span>
+              </div>
             </div>
           </div>
 
@@ -142,8 +188,8 @@
             </header>
             <div class="effect-grid">
               <button class="btn fx active" data-effect="clean" type="button"><i>01</i><span>Clean</span></button>
-              <button class="btn fx" data-effect="deep" type="button"><i>02</i><span>Deep</span></button>
-              <button class="btn fx" data-effect="chipmunk" type="button"><i>03</i><span>High</span></button>
+              <button class="btn fx" data-effect="deep" type="button"><i>02</i><span>Vader</span></button>
+              <button class="btn fx" data-effect="chipmunk" type="button"><i>03</i><span>Chipmunk</span></button>
               <button class="btn fx" data-effect="robot" type="button"><i>04</i><span>Robot</span></button>
               <button class="btn fx" data-effect="megaphone" type="button"><i>05</i><span>Mega</span></button>
             </div>

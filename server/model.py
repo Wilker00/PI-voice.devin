@@ -8,6 +8,8 @@ returning an object with these methods, or the functions directly:
 `analyze_clip(pcm) -> {"f0": ...}`                          (optional)
 `open_stream() -> {convert(pcm, target), set_effect(name)}` (optional; stateful
                                                            per-client converter)
+`stream.prepare_target(target) -> None`                     (optional; blocking
+                                                           clone preparation)
 `convert(pcm_f32_16k, target|None) -> pcm_f32`              (stateless fallback)
 `identify(pcm_f32_16k, profiles) -> (label, conf)`          (optional)
 
@@ -78,7 +80,7 @@ class VoiceStream:
         self.sr = sr
         self.shifter = PitchShifter(sr)
         self.ringmod = RingMod(sr)
-        self.effect = "clone"
+        self.effect = "clean"
         self.ratio_ema = 1.0                    # smoothed clone ratio
         self.f0_buf = np.zeros(int(sr * 0.15), dtype=np.float32)  # 150 ms
 

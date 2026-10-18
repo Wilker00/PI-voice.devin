@@ -2,6 +2,17 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const EFFECT_LABELS = Object.freeze({
+  clean: 'Clean',
+  deep: 'Vader',
+  robot: 'Robot',
+  chipmunk: 'Chipmunk',
+  megaphone: 'Mega',
+  clone: 'Clone',
+});
+const TAKEOVER_MS = reduceMotion ? 150 : 1200;
+const PERSONA_MS = 4500;
 
 let ws = null;
 let audioCtx = null;
@@ -23,6 +34,20 @@ let limiter = null;
 let outGain = null;
 let nextPlayTime = 0;
 let activeTarget = null;
+let activeEffect = 'clean';
+let lastCharacterEffect = 'robot';
+let transformPhase = 'dsp';
+let transformFallback = 'robot';
+
+// Visual identity choreography. It never touches the live audio connection.
+let presentationState = 'console';
+let identityCandidate = null;
+let identityStreak = 0;
+let lastBreachIdentity = null;
+let personaIdentity = null;
+let queuedIdentity = null;
+let takeoverTimer = null;
+let personaTimer = null;
 
 // small display-only ring of recent samples for the waveform canvas
 const VIS_LEN = 8192;
@@ -100,12 +125,25 @@ function connectWS() {
     else if (msg.type === 'enrolled') onEnrolled(msg);
     else if (msg.type === 'target_set') onTargetSet(msg);
     else if (msg.type === 'effect_set') onEffectSet(msg);
+    else if (msg.type === 'transform_state') onTransformState(msg);
     else if (msg.type === 'error') showError(msg.message);
   };
 }
 
 /* ---------------- results / HUD ---------------- */
+// Hold-to-identify: live results pause while held, and the final verdict
+// stays on screen for FINAL_HOLD_MS before live updates resume.
+const FINAL_HOLD_MS = 3000;
+let pttHeld = false;
+let finalUntil = 0;
+
 function onResult(msg) {
+  if (!msg.final && (pttHeld || performance.now() < finalUntil)) return;
+  if (msg.final) finalUntil = performance.now() + FINAL_HOLD_MS;
+  if (msg.error) {
+    $('confidence-readout').textContent = `Final / ${msg.error}`;
+    return;
+  }
   const el = $('speaker');
   const monitor = $('voice-orb');
   const confidence = Math.round(msg.confidence * 100);
@@ -122,11 +160,115 @@ function onResult(msg) {
       ? `${confidence}% / no match`
       : `${confidence}% confidence`;
   }
+  if (msg.final) {
+    const span = msg.held_sec != null ? ` · ${msg.held_sec}s held` : '';
+    $('confidence-readout').textContent = `FINAL / ${$('confidence-readout').textContent}${span}`;
+  }
   $('conf-fill').style.width = `${confidence}%`;
   $('match-readout').textContent = String(confidence).padStart(2, '0');
   $('hud-lat').textContent = `${msg.latency_ms} ms`;
   $('hud-rtf').textContent = msg.rtf;
   $('hud-voiced').textContent = msg.speaker === null ? 'NO' : 'YES';
+  observeIdentity(msg);
+}
+
+function announce(message) {
+  const region = $('sr-status');
+  region.textContent = '';
+  requestAnimationFrame(() => { region.textContent = message; });
+}
+
+function observeIdentity(msg) {
+  const name = typeof msg.speaker === 'string' ? msg.speaker.trim() : '';
+  if (!name || name.toLowerCase() === 'unknown') {
+    identityCandidate = null;
+    identityStreak = 0;
+    return;
+  }
+  if (name === identityCandidate) identityStreak += 1;
+  else {
+    identityCandidate = name;
+    identityStreak = 1;
+  }
+  if (identityStreak < 2 || name === lastBreachIdentity) return;
+  lastBreachIdentity = name;
+  beginIdentitySequence({
+    name,
+    confidence: Math.round(msg.confidence * 100),
+    latency: msg.latency_ms,
+  });
+}
+
+function setPresentation(state) {
+  presentationState = state;
+  appShell.dataset.presentation = state;
+  $('breach-takeover').dataset.active = state === 'crashing' ? 'true' : 'false';
+  $('monitor-default').setAttribute('aria-hidden', state === 'persona' ? 'true' : 'false');
+  $('persona-monitor').setAttribute('aria-hidden', state === 'persona' ? 'false' : 'true');
+}
+
+function beginIdentitySequence(identity) {
+  if (presentationState !== 'console') {
+    if (!personaIdentity || identity.name !== personaIdentity.name) queuedIdentity = identity;
+    return;
+  }
+  clearTimeout(takeoverTimer);
+  clearTimeout(personaTimer);
+  personaIdentity = identity;
+  $('breach-identity').textContent = identity.name.toUpperCase();
+  setPresentation('crashing');
+  takeoverTimer = setTimeout(showPersona, TAKEOVER_MS);
+}
+
+function showPersona() {
+  setPresentation('persona');
+  updatePersona();
+  const route = personaDestination();
+  announce(`${personaIdentity.name} identified. ${route} transformation active.`);
+  restartPersonaTimer();
+}
+
+function restartPersonaTimer() {
+  if (presentationState !== 'persona') return;
+  clearTimeout(personaTimer);
+  personaTimer = setTimeout(returnToConsole, PERSONA_MS);
+}
+
+function returnToConsole() {
+  clearTimeout(personaTimer);
+  setPresentation('console');
+  personaIdentity = null;
+  if (queuedIdentity) {
+    const nextIdentity = queuedIdentity;
+    queuedIdentity = null;
+    setTimeout(() => beginIdentitySequence(nextIdentity), reduceMotion ? 0 : 300);
+  }
+}
+
+function effectLabel(name) {
+  return EFFECT_LABELS[name] || String(name || 'Clean');
+}
+
+function personaDestination() {
+  if ((transformPhase === 'ready' || activeEffect === 'clone') && activeTarget) {
+    return `Clone: ${activeTarget}`;
+  }
+  const fallback = transformPhase === 'preparing' || transformPhase === 'fallback'
+    ? transformFallback : activeEffect;
+  return effectLabel(fallback);
+}
+
+function updatePersona() {
+  if (!personaIdentity) return;
+  $('persona-source').textContent = personaIdentity.name;
+  $('persona-destination').textContent = personaDestination();
+  $('persona-confidence').textContent = `${personaIdentity.confidence}%`;
+  $('persona-latency').textContent = `${personaIdentity.latency} ms`;
+  const status = transformPhase === 'preparing' ? 'CLONE PREPARING'
+    : transformPhase === 'ready' ? 'CLONE READY'
+      : transformPhase === 'fallback' ? 'DSP FALLBACK' : 'DSP ACTIVE';
+  $('persona-status').textContent = status;
+  appShell.dataset.transformPhase = transformPhase;
 }
 
 /* ---------------- mic pipeline ---------------- */
@@ -274,18 +416,25 @@ function onPCM(arrayBuffer) {
   document.documentElement.style.setProperty('--level', level.toFixed(3));
   $('level-fill').style.width = `${levelPercent}%`;
   $('level-readout').textContent = String(levelPercent).padStart(2, '0');
+  $('persona-level').textContent = String(levelPercent).padStart(2, '0');
 }
 
 /* ---------------- push-to-talk ---------------- */
 const ptt = $('btn-ptt');
-ptt.addEventListener('pointerdown', () => {
+ptt.addEventListener('pointerdown', (e) => {
+  // capture: a finger drifting off the button mustn't end the hold early
+  ptt.setPointerCapture(e.pointerId);
   ptt.classList.add('held');
   $('voice-orb').classList.add('identifying');
+  pttHeld = true;
+  send({ type: 'ptt_start' });
+  $('confidence-readout').textContent = 'Listening… release to identify';
 });
 const endPTT = () => {
   if (ptt.classList.contains('held')) {
     ptt.classList.remove('held');
     $('voice-orb').classList.remove('identifying');
+    pttHeld = false;
     send({ type: 'final' });
   }
 };
@@ -336,7 +485,7 @@ function onEnrolled(msg) {
 }
 
 function onTargetSet(msg) {
-  activeTarget = msg.name;
+  activeTarget = msg.found ? msg.name : null;
   appShell.dataset.target = msg.found ? 'selected' : 'none';
   $('target-label').textContent = msg.found ? `TARGET / ${msg.name}` : 'NO TARGET';
   refreshProfiles();
@@ -345,11 +494,39 @@ function onTargetSet(msg) {
 
 /* ---------------- voice effects ---------------- */
 function onEffectSet(msg) {
+  activeEffect = msg.name;
+  if (!['clean', 'clone'].includes(msg.name)) lastCharacterEffect = msg.name;
+  if (msg.name === 'clone') transformPhase = 'ready';
+  else transformPhase = 'dsp';
   appShell.dataset.effect = msg.name;
   $('hud-fx').textContent = msg.name === 'clone' && activeTarget
     ? `clone:${activeTarget}` : msg.name;
   document.querySelectorAll('.btn.fx').forEach((b) =>
     b.classList.toggle('active', b.dataset.effect === msg.name));
+  updatePersona();
+  restartPersonaTimer();
+}
+
+function onTransformState(msg) {
+  transformPhase = msg.phase === 'cancelled' ? 'dsp' : msg.phase;
+  if (msg.fallback) {
+    transformFallback = msg.fallback;
+    lastCharacterEffect = msg.fallback;
+  }
+  if (msg.target && msg.phase !== 'cancelled') activeTarget = msg.target;
+  if (msg.phase === 'preparing') {
+    $('target-label').textContent = `CLONE / ${msg.target} / PREPARING`;
+  } else if (msg.phase === 'ready') {
+    $('target-label').textContent = `TARGET / ${msg.target}`;
+  } else if (msg.phase === 'fallback') {
+    $('target-label').textContent = `TARGET / ${msg.target} / DSP`;
+  }
+  updatePersona();
+  if (presentationState === 'persona') {
+    if (msg.phase === 'ready') announce(`${msg.target} clone ready.`);
+    else if (msg.phase === 'fallback') announce(`Clone unavailable. ${effectLabel(msg.fallback)} fallback remains active.`);
+    restartPersonaTimer();
+  }
 }
 document.querySelectorAll('.btn.fx').forEach((b) =>
   b.addEventListener('click', () =>
@@ -469,7 +646,6 @@ function drawWave() {
 }
 
 /* ---------------- matrix rain ---------------- */
-const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 (function drawRain() {
   const cv = $('rain');
   if (reduceMotion) return;

@@ -23,6 +23,7 @@ class Settings:
     model_module: str | None
     conf_threshold: float    # min cosine-sim confidence to name a speaker
     silence_rms: float       # below this RMS a window counts as silence
+    clone_prepare_timeout_sec: float  # max wait for an optional clone warmup
     # Storage
     profiles_path: Path
     web_dir: Path
@@ -54,6 +55,9 @@ def get_settings() -> Settings:
         model_module=env.get("MODEL_MODULE") or None,
         conf_threshold=float(env.get("CONF_THRESHOLD", "0.55")),
         silence_rms=float(env.get("SILENCE_RMS", "0.005")),
+        clone_prepare_timeout_sec=float(env.get(
+            "CLONE_PREPARE_TIMEOUT_SEC", "15"
+        )),
         profiles_path=Path(env.get(
             "PROFILES_PATH", str(REPO_ROOT / "server" / "data" / "profiles.json")
         )),

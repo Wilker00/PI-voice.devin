@@ -17,6 +17,7 @@ def app(tmp_path):
         buffer_seconds=4, window_sec=0.25, hop_sec=0.1,
         enroll_seconds=0.5, model_module=None,
         conf_threshold=0.3, silence_rms=0.001,
+        clone_prepare_timeout_sec=0.25,
         profiles_path=tmp_path / "profiles.json",
         web_dir=REPO_ROOT / "web",
     )
@@ -81,9 +82,23 @@ def test_ws_enroll_then_identify(app):
         ws.send_text(json.dumps({"type": "target", "name": "robbie"}))
         t = recv_until(ws, "target_set")
         assert t["name"] == "robbie" and t["found"] is True
-        # target selection auto-switches the converter to clone mode
-        fx = recv_until(ws, "effect_set")
-        assert fx["name"] == "clone"
+        # clone path: fallback effect keeps audio live while preparing,
+        # then the transform flips to clone + ready once prepared
+        seen = {"fx": [], "phases": []}
+        for _ in range(40):
+            m = ws.receive()
+            if m.get("bytes") is not None or not m.get("text"):
+                continue
+            p = json.loads(m["text"])
+            if p["type"] == "effect_set":
+                seen["fx"].append(p["name"])
+            elif p["type"] == "transform_state":
+                seen["phases"].append(p["phase"])
+            if "ready" in seen["phases"]:
+                break
+        assert "preparing" in seen["phases"]
+        assert "ready" in seen["phases"]
+        assert seen["fx"][-1] == "clone"
         # manual effect switch works too
         ws.send_text(json.dumps({"type": "effect", "name": "deep"}))
         assert recv_until(ws, "effect_set")["name"] == "deep"
