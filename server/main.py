@@ -1,6 +1,7 @@
 """PI Voice — FastAPI app: static frontend + REST + /ws audio socket."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import FastAPI, WebSocket
@@ -46,6 +47,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await ws.accept()
         try:
             await ClientSession(ws, model, profiles, s).run()
+        except asyncio.CancelledError:
+            # ASGI servers cancel the connection task during a normal socket
+            # teardown. ClientSession's finally block has already cleaned up.
+            return
         except Exception:
             logging.getLogger("pi_voice").exception("session error")
 
