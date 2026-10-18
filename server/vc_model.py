@@ -408,13 +408,31 @@ class CloneStream:
         self.depth = max(1, int(os.environ.get("VC_QUEUE_DEPTH", "2")))
         self._in: "queue.Queue" = queue.Queue()
         self._out: "queue.Queue" = queue.Queue()
+        self._gen = 0          # bumped when leaving clone: stale work dies
         self.dropped = 0
-        threading.Thread(target=self._worker, daemon=True).start()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
 
     # -- session hooks ------------------------------------------------------
 
     def set_effect(self, name: str) -> None:
-        pass    # character effects route through the session's VoiceStream
+        # Leaving clone: everything queued or in flight was produced for the
+        # old transform (maybe an old target) — it must never reach the ears.
+        if name != "clone":
+            self._gen += 1
+            self._flush()
+
+    def close(self) -> None:
+        """Session teardown: let the worker thread exit."""
+        self._in.put(None)
+
+    def _flush(self) -> None:
+        for q in (self._in, self._out):
+            while True:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
 
     def prepare_target(self, target) -> None:
         """End-to-end warmup/health probe (runs inside the session's prepare
@@ -442,7 +460,7 @@ class CloneStream:
                     log.info("clone queue full — dropped oldest utterance")
                 except queue.Empty:
                     break
-            self._in.put((utt, ref))
+            self._in.put((utt, ref, self._gen))
         outs = []
         while True:
             try:
@@ -457,7 +475,12 @@ class CloneStream:
 
     def _worker(self) -> None:
         while True:
-            utt, ref = self._in.get()
+            item = self._in.get()
+            if item is None:
+                return                      # close(): session is gone
+            utt, ref, gen = item
+            if gen != self._gen:
+                continue                    # stale: dropped by an effect change
             t0 = time.perf_counter()
             try:
                 y = self.backend.convert(utt, ref)
@@ -474,7 +497,8 @@ class CloneStream:
                 "queue_dropped": self.dropped,
                 "ts": round(time.time(), 1),
             })
-            if y is not None and y.size:
+            # gen may have bumped mid-conversion: check again before emitting
+            if gen == self._gen and y is not None and y.size:
                 self._out.put(np.asarray(y, np.float32))
 
     def _ref_of(self, target):

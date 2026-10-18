@@ -1112,9 +1112,10 @@ h1 .slash { color: var(--orange); font-weight: 300; }
 .btn.fx {
   position: relative;
   display: grid;
-  gap: 13px;
+  gap: 7px;
+  justify-items: start;
   min-width: 0;
-  min-height: 76px;
+  min-height: 116px;
   padding: 11px 10px;
   color: var(--text-soft);
   border: 1px solid var(--line);
@@ -1136,7 +1137,20 @@ h1 .slash { color: var(--orange); font-weight: 300; }
 .btn.fx:hover { color: var(--text); border-color: var(--line-strong); transform: translateY(-2px); }
 .btn.fx:active { transform: translateY(1px); }
 .btn.fx i { color: var(--muted); font-family: var(--mono); font-size: .53rem; font-style: normal; }
-.btn.fx span { overflow: hidden; font-size: .68rem; font-weight: 580; text-overflow: ellipsis; text-transform: uppercase; }
+.btn.fx .fx-label { max-width: 100%; overflow: hidden; font-size: .68rem; font-weight: 580; text-overflow: ellipsis; text-transform: uppercase; }
+.fx-icon {
+  display: block;
+  width: 42px;
+  height: 42px;
+  background: currentColor;
+  -webkit-mask: var(--fx-image) center / contain no-repeat;
+  mask: var(--fx-image) center / contain no-repeat;
+}
+.fx-clean { --fx-image: url("icons/sound-waves.svg"); }
+.fx-vader { --fx-image: url("icons/overlord-helm.svg"); }
+.fx-chipmunk { --fx-image: url("icons/squirrel.svg"); }
+.fx-robot { --fx-image: url("icons/mecha-head.svg"); }
+.fx-mega { --fx-image: url("icons/megaphone.svg"); }
 .btn.fx.active { color: var(--ink); border-color: var(--mint); background: var(--mint); }
 .btn.fx.active::before { width: 100%; }
 .btn.fx.active i { color: rgba(13, 17, 16, .58); }
@@ -1267,6 +1281,25 @@ h1 .slash { color: var(--orange); font-weight: 300; }
 }
 .enroll-button:hover { background: var(--mint-bright); }
 .enroll-button:disabled { opacity: .62; cursor: wait; }
+.enroll-button[data-state="recording"],
+.enroll-button[data-state="processing"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 116px;
+  opacity: 1;
+}
+.enroll-button[data-state="recording"] { background: var(--orange); }
+.enroll-button[data-state="recording"]::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  animation: recordBlink .8s steps(2, end) infinite;
+}
+.enroll-button[data-state="processing"] { background: var(--mint-bright); }
 .library-panel.enrolling::after { width: 100%; background: var(--orange); animation: enrollBar 1s linear infinite alternate; }
 #enroll-status { min-height: 0; color: var(--mint); font-family: var(--mono); font-size: .57rem; line-height: 1.5; }
 #enroll-status:not(:empty) { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line); }
@@ -1413,6 +1446,7 @@ input:focus-visible,
 @keyframes pendingPulse { 50% { filter: brightness(.72); } }
 @keyframes identifyFlash { 50% { filter: brightness(1.14) contrast(1.06); } }
 @keyframes voiceBars { to { height: 20px; } }
+@keyframes recordBlink { 50% { opacity: .2; } }
 @keyframes enrollBar { to { transform: scaleX(.3); transform-origin: left; } }
 @keyframes glitchShiftA {
   0%, 3.4%, 6.6%, 38.4%, 41.6%, 100% { opacity: 0; transform: none; clip-path: inset(0 0 0 0); }

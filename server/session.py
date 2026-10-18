@@ -56,6 +56,9 @@ class ClientSession:
             await asyncio.gather(*pending, return_exceptions=True)
         finally:
             self._cancel_prepare()
+            close = getattr(self.conv, "close", None)
+            if close:
+                close()
 
     # -- inbound -----------------------------------------------------
 

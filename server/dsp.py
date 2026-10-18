@@ -1,6 +1,6 @@
 """Lightweight DSP for the voice changer — numpy only, Pi-4 friendly.
 
-- PitchShifter: classic dual-reader delay-line shifter, vectorized.
+- PitchShifter: streaming WSOLA (stretch, then read back ratio x faster).
 - estimate_f0:  autocorrelation F0 tracker (used for clone-mode matching).
 - RingMod / megaphone: extra presets.
 """

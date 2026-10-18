@@ -111,3 +111,30 @@ def test_identity_roast_contract():
     # real name still lands in the HUD, gag only in the takeover
     assert "el.textContent = msg.speaker" in js
     assert "$('breach-identity').textContent = identity.gag" in js
+
+
+def test_enrollment_button_shows_live_recording_state():
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "setEnrollButtonState('recording', left)" in js
+    assert "setEnrollButtonState('processing')" in js
+    assert "button.textContent = `Recording ${seconds}s`" in js
+
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    assert '.enroll-button[data-state="recording"]' in css
+    assert "@keyframes recordBlink" in css
+
+
+def test_voice_effect_vectors_are_local_and_wired():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    assets = {
+        "sound-waves.svg", "overlord-helm.svg", "squirrel.svg",
+        "mecha-head.svg", "megaphone.svg",
+    }
+
+    assert html.count('class="fx-icon ') == len(assets)
+    for filename in assets:
+        path = WEB / "icons" / filename
+        assert path.is_file()
+        assert f'url("icons/{filename}")' in css
+        assert 'viewBox="0 0 512 512"' in path.read_text(encoding="utf-8")

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0b0d0e">
   <meta name="description" content="Pi Voice is a real-time, on-device voice identification and transformation instrument.">
   <title>Pi Voice — Voice Transformation System</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -156,6 +157,12 @@
           </div>
 
           <div class="transport" aria-label="Session controls">
+            <button id="btn-ptt" class="identify-control hidden" type="button">
+              <span class="identify-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="identify-copy"><strong>Hold to identify</strong><small>Release for final result</small></span>
+              <span class="hold-code" aria-hidden="true">HOLD</span>
+            </button>
+
             <button id="btn-mic" class="record-control" type="button">
               <span class="record-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 15a4 4 0 0 0 4-4V6a4 4 0 1 0-8 0v5a4 4 0 0 0 4 4Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>
@@ -166,12 +173,6 @@
               </span>
               <span class="control-code">EXEC</span>
               <svg class="arrow-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
-            </button>
-
-            <button id="btn-ptt" class="identify-control hidden" type="button">
-              <span class="identify-icon" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span class="identify-copy"><strong>Hold to identify</strong><small>Release for final result</small></span>
-              <span class="hold-code" aria-hidden="true">HOLD</span>
             </button>
           </div>
         </section>
@@ -187,11 +188,11 @@
               <span class="module-value">FX/<b id="hud-fx">clean</b></span>
             </header>
             <div class="effect-grid">
-              <button class="btn fx active" data-effect="clean" type="button"><i>01</i><span>Clean</span></button>
-              <button class="btn fx" data-effect="deep" type="button"><i>02</i><span>Vader</span></button>
-              <button class="btn fx" data-effect="chipmunk" type="button"><i>03</i><span>Chipmunk</span></button>
-              <button class="btn fx" data-effect="robot" type="button"><i>04</i><span>Robot</span></button>
-              <button class="btn fx" data-effect="megaphone" type="button"><i>05</i><span>Mega</span></button>
+              <button class="btn fx active" data-effect="clean" type="button"><span class="fx-icon fx-clean" aria-hidden="true"></span><i>01</i><span class="fx-label">Clean</span></button>
+              <button class="btn fx" data-effect="deep" type="button"><span class="fx-icon fx-vader" aria-hidden="true"></span><i>02</i><span class="fx-label">Vader</span></button>
+              <button class="btn fx" data-effect="chipmunk" type="button"><span class="fx-icon fx-chipmunk" aria-hidden="true"></span><i>03</i><span class="fx-label">Chipmunk</span></button>
+              <button class="btn fx" data-effect="robot" type="button"><span class="fx-icon fx-robot" aria-hidden="true"></span><i>04</i><span class="fx-label">Robot</span></button>
+              <button class="btn fx" data-effect="megaphone" type="button"><span class="fx-icon fx-mega" aria-hidden="true"></span><i>05</i><span class="fx-label">Mega</span></button>
             </div>
           </section>
 

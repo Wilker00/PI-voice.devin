@@ -39,7 +39,9 @@ registerProcessor('pcm-processor', PCMProcessor);
 // as its own buffer leaves a gap whenever one is late. Here they queue in
 // a ring buffer that starts playing once the cushion is buffered, so a
 // late frame drains the cushion instead of going silent. The cushion
-// adapts: each time playback runs dry it grows (up to 300 ms), and after
+// adapts: when playback runs dry and audio resumes within 350 ms (a late
+// frame), it grows (up to 300 ms); longer pauses are the server going
+// quiet on purpose (enrolling, switching target) and don't count. After
 // 10 s without a gap it shrinks back toward 120 ms. Running dry fades the
 // last sample out; a backlog well past the cushion is trimmed so latency
 // can't creep up.
@@ -57,16 +59,23 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     this._target = this._minTarget;
     this._step = Math.round(sr * 0.04);
     this._calm = 0;                          // samples since the last gap
+    this._clock = 0;                         // samples rendered
+    this._dryAt = -1;                        // when playback last ran dry
+    this._lateGap = Math.round(sr * 0.35);   // shorter = jitter, longer = pause
+    this._pauses = 0;
     this._playing = false;
     this._fade = 0;                         // 0..1 ramp around gaps
     this._fadeStep = 1 / (sr * 0.005);      // 5 ms
     this._last = 0;                         // decays out on underrun
     this._decay = Math.exp(-1 / (sr * 0.002));
-    // Gate: per-sample envelope, instant attack, hold, slow release —
-    // keeps soft syllables and word tails instead of muting 85 ms blocks.
-    this._env = 0;
-    this._envRel = Math.exp(-1 / (sr * 0.03));
-    this._gateThr = 0.0045;                 // ~-48 dBFS
+    // Gate: per-sample RMS envelope (~10 ms smoothing), hold, slow
+    // release — keeps soft syllables and word tails instead of muting
+    // 85 ms blocks. RMS rather than peak: white room noise has peaks
+    // far above its RMS, and a peak envelope would rest above the
+    // threshold on nothing but the noise floor.
+    this._env2 = 0;                         // smoothed power ~ RMS^2
+    this._envK = 1 - Math.exp(-1 / (sr * 0.01));
+    this._gateThr2 = 0.0045 * 0.0045;       // ~-48 dBFS RMS, squared
     this._holdLen = Math.round(sr * 0.12);
     this._hold = 0;
     this._g = 0;
@@ -85,6 +94,8 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     this._r = this._w = this._count = 0;
     this._playing = false;
     this._fade = 0;
+    this._dryAt = -1;
+    this._env2 = this._hold = this._g = this._last = 0;
   }
 
   _push(f32) {
@@ -94,7 +105,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
       if (this._count < this._cap) this._count++;
       else this._r = (this._r + 1) % this._cap;   // full: drop oldest
     }
-    if (this._count > this._target + Math.round(sampleRate * 0.25)) {
+    if (this._count > this._target + Math.round(sampleRate * 0.15)) {
       const drop = this._count - this._target;
       this._r = (this._r + drop) % this._cap;
       this._count -= drop;
@@ -105,7 +116,19 @@ class PlaybackProcessor extends AudioWorkletProcessor {
 
   process(inputs, outputs) {
     const out = outputs[0][0];
-    if (!this._playing && this._count >= this._target) this._playing = true;
+    if (!this._playing && this._count >= this._target) {
+      this._playing = true;
+      if (this._dryAt >= 0) {                // resuming after running dry
+        if (this._clock - this._dryAt < this._lateGap) {
+          this._underruns++;                 // a late frame: widen cushion
+          this._target = Math.min(this._maxTarget, this._target + this._step);
+          this._calm = 0;
+        } else {
+          this._pauses++;                    // deliberate pause: ignore
+        }
+        this._dryAt = -1;
+      }
+    }
     for (let i = 0; i < out.length; i++) {
       let s;
       if (this._playing && this._count > 0) {
@@ -118,22 +141,20 @@ class PlaybackProcessor extends AudioWorkletProcessor {
       } else {
         if (this._playing) {                 // ran dry mid-stream
           this._playing = false;
-          this._underruns++;
-          this._target = Math.min(this._maxTarget, this._target + this._step);
-          this._calm = 0;
+          this._dryAt = this._clock + i;
         }
         this._fade = 0;
         this._last *= this._decay;           // no click: tail off
         s = this._last;
       }
-      const a = Math.abs(s);
-      this._env = a > this._env ? a : this._env * this._envRel;
-      if (this._env > this._gateThr) this._hold = this._holdLen;
+      this._env2 += (s * s - this._env2) * this._envK;
+      if (this._env2 > this._gateThr2) this._hold = this._holdLen;
       else if (this._hold > 0) this._hold--;
       const tgt = this._hold > 0 ? 1 : 0;
       this._g += (tgt - this._g) * (tgt > this._g ? this._gAtk : this._gRel);
       out[i] = s * this._g;
     }
+    this._clock += out.length;
     this._calm += out.length;
     if (this._calm >= sampleRate * 10 && this._target > this._minTarget) {
       this._target = Math.max(this._minTarget, this._target - this._step / 4);
@@ -146,6 +167,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
         bufferedMs: Math.round(this._count / sampleRate * 1000),
         cushionMs: Math.round(this._target / sampleRate * 1000),
         underruns: this._underruns,
+        pauses: this._pauses,
         trimmed: this._trimmed,
       });
     }

@@ -4,6 +4,8 @@ backend. The real audiocpp backend is skipped unless AUDIOCPP_BIN is set.
 """
 import json
 import os
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -12,6 +14,7 @@ from fastapi.testclient import TestClient
 from server.audio import float32_to_pcm16
 from server.config import REPO_ROOT, Settings
 from server.main import create_app
+from server.profiles import ProfileStore
 from server.vc_model import (AudiocppCliBackend, MockBackend, Segmenter,
                              VCModel, read_wav, write_wav)
 
@@ -158,6 +161,52 @@ def test_identify_picks_right_profile():
     assert label2 == "bob"
 
 
+def test_clone_stream_drops_stale_work_on_effect_change():
+    import time
+
+    class SlowBackend:
+        name = "slow"
+
+        def convert(self, utt, ref):
+            time.sleep(0.2)
+            return utt * 0.5
+
+    m = VCModel(SR, backend=SlowBackend(), min_ref_s=0.3)
+    st = m.open_stream()
+    ref = m.embed(speech(0.6))
+    for ch in chunks(np.concatenate([speech(0.5), sil(0.6)])):
+        st.convert(ch, ref)          # one utterance reaches the worker
+    st.set_effect("robot")           # leaving clone kills queued + in-flight
+    st.set_effect("clone")
+    time.sleep(0.3)                  # the stale conversion finishes anyway
+    for ch in chunks(sil(0.3)):
+        assert st.convert(ch, ref).size == 0
+    st.close()
+
+
+def test_clone_stream_worker_exits_on_close():
+    m = make_model()
+    st = m.open_stream()
+    st.close()
+    st._thread.join(timeout=2)
+    assert not st._thread.is_alive()
+
+
+def test_enroll_clip_tool(tmp_path):
+    wav = tmp_path / "clip.wav"
+    write_wav(str(wav), speech(1.0, freq=190), SR)
+    prof = tmp_path / "profiles.json"
+    env = {**os.environ, "PROFILES_PATH": str(prof),
+           "MODEL_MODULE": "server.vc_model", "VC_BACKEND": "mock"}
+    r = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tools" / "enroll_clip.py"),
+         "clipper", str(wav)],
+        capture_output=True, text=True, env=env, cwd=REPO_ROOT)
+    assert r.returncode == 0, r.stderr
+    emb = ProfileStore(prof).get("clipper")["emb"]
+    assert emb.size == SR          # vc_model stores the whole clip as ref
+
+
 def test_stats_sidecar_written(tmp_path):
     f = tmp_path / "stats.json"
     m = VCModel(SR, backend=MockBackend(), min_ref_s=0.3, stats_file=str(f))
@@ -240,9 +289,11 @@ def test_vc_model_end_to_end_ws(monkeypatch, tmp_path):
         ws.send_text(json.dumps({"type": "target", "name": "robbie"}))
         assert recv_until(ws, "target_set")["found"] is True
 
-        # stream one utterance + trailing silence; expect buffering then
-        # exactly ONE big converted block
-        utt = np.concatenate([speech(0.8), sil(0.7)])
+        # stream one utterance + long trailing silence; expect buffering
+        # then exactly ONE big converted block. The phone never stops
+        # streaming frames, and CloneStream drains converted output on
+        # later chunks — keep the silence long enough to flush the worker.
+        utt = np.concatenate([speech(0.8), sil(2.0)])
         for i in range(0, utt.size, 1600):
             ws.send_bytes(float32_to_pcm16(utt[i:i + 1600]))
 

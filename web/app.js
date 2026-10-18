@@ -363,7 +363,7 @@ async function startMic() {
     playNode.port.onmessage = (e) => {
       const s = e.data;   // ~1/s: buffer depth + gap counters
       $('hud-aud').title = `buffer ${s.bufferedMs}/${s.cushionMs} ms`
-        + ` · gaps ${s.underruns} · latency trims ${s.trimmed}`;
+        + ` · gaps ${s.underruns} · pauses ${s.pauses} · latency trims ${s.trimmed}`;
     };
     playNode.connect(limiter);
 
@@ -481,6 +481,25 @@ ptt.addEventListener('pointercancel', endPTT);
 ptt.addEventListener('pointerleave', endPTT);
 
 /* ---------------- enrollment ---------------- */
+const ENROLL_IDLE_LABEL = $('btn-enroll').textContent;
+
+function setEnrollButtonState(state, seconds = null) {
+  const button = $('btn-enroll');
+  if (state === 'recording') {
+    button.dataset.state = 'recording';
+    button.textContent = `Recording ${seconds}s`;
+    button.setAttribute('aria-label', `Recording, ${seconds} seconds remaining`);
+  } else if (state === 'processing') {
+    button.dataset.state = 'processing';
+    button.textContent = 'Processing…';
+    button.setAttribute('aria-label', 'Recording complete, processing voice profile');
+  } else {
+    delete button.dataset.state;
+    button.textContent = ENROLL_IDLE_LABEL;
+    button.removeAttribute('aria-label');
+  }
+}
+
 $('btn-enroll').addEventListener('click', () => {
   const name = $('enroll-name').value.trim();
   if (!name || enrolling) return;
@@ -494,25 +513,32 @@ function onEnrollStarted(msg) {
   enrolling = true;
   $('enroll').classList.add('enrolling');
   $('btn-enroll').disabled = true;
-  let left = msg.seconds;
+  let left = Math.ceil(Number(msg.seconds) || 10);
   const label = `Recording ${msg.name}… `;
+  setEnrollButtonState('recording', left);
   $('enroll-status').textContent = `${label}${left}s — talk normally`;
   enrollTimer = setInterval(() => {
     left -= 1;
     if (left <= 0) {
       clearInterval(enrollTimer);
+      enrollTimer = null;
       send({ type: 'enroll_stop' });
+      setEnrollButtonState('processing');
       $('enroll-status').textContent = 'Computing voice profile on the Pi…';
     } else {
+      setEnrollButtonState('recording', left);
       $('enroll-status').textContent = `${label}${left}s — talk normally`;
     }
   }, 1000);
 }
 
 function onEnrolled(msg) {
+  if (enrollTimer) clearInterval(enrollTimer);
+  enrollTimer = null;
   enrolling = false;
   $('enroll').classList.remove('enrolling');
   $('btn-enroll').disabled = false;
+  setEnrollButtonState('idle');
   $('enroll-status').textContent = msg.ok
     ? `Enrolled "${msg.name}".`
     : `Enroll failed: ${msg.error}`;
