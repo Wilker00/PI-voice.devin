@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import shlex
 import subprocess
 import tempfile
@@ -271,6 +272,7 @@ class VCModel:
                  passthrough_no_target: bool = True, **seg_kw):
         self.sr = int(sr)
         self.backend = backend or MockBackend()
+        self.seg_kw = dict(seg_kw)
         self.seg = Segmenter(sr=self.sr, **seg_kw)
         self.min_ref = int(self.sr * float(min_ref_s))
         self.stats_file = Path(stats_file) if stats_file else None
@@ -374,6 +376,114 @@ class VCModel:
             os.replace(tmp, self.stats_file)
         except Exception:
             log.exception("stats sidecar write failed")
+
+
+    def open_stream(self) -> "CloneStream":
+        """Non-blocking per-client clone stream — the session prefers this
+        when present (see server/session.py: open_stream protocol)."""
+        return CloneStream(self)
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking clone stream (priority fix: recv never waits on inference)
+# ---------------------------------------------------------------------------
+
+class CloneStream:
+    """Per-client non-blocking clone converter.
+
+    convert() NEVER runs the backend on the caller's thread: completed
+    utterances go to a bounded worker queue (drop-oldest, so lag cannot
+    compound) and finished conversions come back FIFO on later calls.
+    The phone streams chunks continuously (silence included), so results
+    flush within ~100 ms of completion.
+    """
+
+    def __init__(self, model: "VCModel"):
+        self.model = model
+        self.sr = model.sr
+        self.backend = model.backend
+        self.seg = Segmenter(sr=model.sr, **model.seg_kw)
+        self.min_ref = model.min_ref
+        self.passthrough = model.passthrough_no_target
+        self.depth = max(1, int(os.environ.get("VC_QUEUE_DEPTH", "2")))
+        self._in: "queue.Queue" = queue.Queue()
+        self._out: "queue.Queue" = queue.Queue()
+        self.dropped = 0
+        threading.Thread(target=self._worker, daemon=True).start()
+
+    # -- session hooks ------------------------------------------------------
+
+    def set_effect(self, name: str) -> None:
+        pass    # character effects route through the session's VoiceStream
+
+    def prepare_target(self, target) -> None:
+        """End-to-end warmup/health probe (runs inside the session's prepare
+        task with its own timeout): proves the backend path works so the
+        session's fallback-to-character UX triggers correctly when it doesn't."""
+        ref = self._ref_of(target)
+        if ref is None:
+            return
+        y = self.backend.convert(np.zeros(int(self.sr * 0.5), np.float32), ref)
+        if y is None:
+            raise RuntimeError("clone backend failed warmup probe")
+
+    # -- hot path -------------------------------------------------------------
+
+    def convert(self, pcm: np.ndarray, target) -> np.ndarray:
+        pcm = np.asarray(pcm, np.float32)
+        ref = self._ref_of(target)
+        if ref is None:
+            return pcm if self.passthrough else np.empty(0, np.float32)
+        for utt in self.seg.feed(pcm):
+            while self._in.qsize() >= self.depth:   # stay live: drop oldest
+                try:
+                    self._in.get_nowait()
+                    self.dropped += 1
+                    log.info("clone queue full — dropped oldest utterance")
+                except queue.Empty:
+                    break
+            self._in.put((utt, ref))
+        outs = []
+        while True:
+            try:
+                outs.append(self._out.get_nowait())
+            except queue.Empty:
+                break
+        if not outs:
+            return np.empty(0, np.float32)
+        return outs[0] if len(outs) == 1 else np.concatenate(outs)
+
+    # -- worker ---------------------------------------------------------------
+
+    def _worker(self) -> None:
+        while True:
+            utt, ref = self._in.get()
+            t0 = time.perf_counter()
+            try:
+                y = self.backend.convert(utt, ref)
+            except Exception:
+                log.exception("clone worker conversion failed")
+                continue
+            wall = time.perf_counter() - t0
+            utt_s = utt.size / self.sr
+            self.model._write_stats({
+                "backend": getattr(self.backend, "name", "?"),
+                "utt_s": round(utt_s, 2),
+                "convert_s": round(wall, 2),
+                "rtf": round(wall / utt_s, 2) if utt_s > 0 else None,
+                "queue_dropped": self.dropped,
+                "ts": round(time.time(), 1),
+            })
+            if y is not None and y.size:
+                self._out.put(np.asarray(y, np.float32))
+
+    def _ref_of(self, target):
+        if isinstance(target, dict):
+            target = target.get("emb")
+        if target is None:
+            return None
+        ref = np.asarray(target, np.float32)
+        return ref if ref.size >= self.min_ref else None
 
 
 # ---------------------------------------------------------------------------
