@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PI Voice</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>PI Voice</h1>
+  <span id="temp-badge" class="badge" title="Raspberry Pi thermal">Pi --</span>
+</header>
+
+<div id="ctx-warning" class="banner hidden">
+  <b>Mic blocked:</b> this page needs a secure context.<br>
+  Fix: on Android Chrome add this origin at
+  <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>,
+  or serve HTTPS / use localhost.
+</div>
+<div id="error" class="banner hidden"></div>
+
+<main>
+  <section id="stage">
+    <div id="speaker">&mdash;</div>
+    <div class="conf-track"><div id="conf-fill"></div></div>
+    <canvas id="wave" width="640" height="120"></canvas>
+    <div class="level-track"><div id="level-fill"></div></div>
+  </section>
+
+  <section id="controls">
+    <button id="btn-mic" class="btn primary">Start mic</button>
+    <button id="btn-ptt" class="btn hidden">Hold to classify</button>
+  </section>
+
+  <section id="enroll" class="hidden">
+    <h2>Enroll a voice</h2>
+    <div class="row">
+      <input id="enroll-name" type="text" placeholder="teammate name"
+             autocomplete="off" maxlength="24">
+      <button id="btn-enroll" class="btn">Enroll (10s)</button>
+    </div>
+    <div id="enroll-status"></div>
+    <ul id="profiles"></ul>
+  </section>
+</main>
+
+<footer id="hud">
+  <span>ws <b id="hud-ws">off</b></span>
+  <span>lat <b id="hud-lat">--</b></span>
+  <span>rtf <b id="hud-rtf">--</b></span>
+  <span>voiced <b id="hud-voiced">--</b></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
