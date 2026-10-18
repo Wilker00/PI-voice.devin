@@ -9,8 +9,8 @@ import time
 import numpy as np
 from starlette.websockets import WebSocket
 
-from .audio import (RingBuffer, float32_to_pcm16, pcm16_to_float32,
-                    resample_linear)
+from .audio import (RingBuffer, StreamResampler, float32_to_pcm16,
+                    pcm16_to_float32)
 from .config import Settings
 from .profiles import ProfileStore
 
@@ -26,6 +26,7 @@ class ClientSession:
         self.s = settings
         self.ring = RingBuffer(settings.buffer_samples)
         self.src_rate = settings.model_sr  # until client reports otherwise
+        self._set_rate(self.src_rate)
         self.enrolling: str | None = None
         self.target_name: str | None = None
         self.target: dict | None = None   # {"emb": ndarray, "f0": float|None}
@@ -59,9 +60,7 @@ class ClientSession:
                     await self._send({"type": "error", "message": str(exc)})
 
     async def _on_pcm(self, data: bytes) -> None:
-        pcm = pcm16_to_float32(data)
-        if self.src_rate != self.s.model_sr:
-            pcm = resample_linear(pcm, self.src_rate, self.s.model_sr)
+        pcm = self._rs_in.process(pcm16_to_float32(data))
         self.ring.write(pcm)
         # Per-chunk conversion keeps the speaker loop low-latency.
         # While enrolling we buffer only — no playback to feed back.
@@ -71,17 +70,22 @@ class ClientSession:
         out = await asyncio.to_thread(convert, pcm, self.target)
         if out is None or out.size == 0:
             return
-        if self.src_rate != self.s.model_sr:
-            out = resample_linear(out, self.s.model_sr, self.src_rate)
+        out = self._rs_out.process(out)
         try:
             await self.ws.send_bytes(float32_to_pcm16(out))
         except Exception:
             self._stop.set()
 
+    def _set_rate(self, rate: int) -> None:
+        # Fresh stream state per "start" (also after a reconnect).
+        self.src_rate = rate
+        self._rs_in = StreamResampler(rate, self.s.model_sr)
+        self._rs_out = StreamResampler(self.s.model_sr, rate)
+
     async def _on_control(self, msg: dict) -> None:
         kind = msg.get("type")
         if kind == "start":
-            self.src_rate = int(msg.get("sampleRate") or self.s.model_sr)
+            self._set_rate(int(msg.get("sampleRate") or self.s.model_sr))
             await self._send({"type": "started", "model_sr": self.s.model_sr})
         elif kind == "enroll_start":
             name = str(msg.get("name") or "").strip()

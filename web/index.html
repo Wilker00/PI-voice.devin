@@ -3,59 +3,91 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f2f0e7">
-  <title>Pi Voice — a real-time voice instrument</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <meta name="theme-color" content="#0b0d0e">
+  <meta name="description" content="Pi Voice is a real-time, on-device voice identification and transformation instrument.">
+  <title>Pi Voice — Signal Identity System</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="page-scene" aria-hidden="true"></div>
+  <div class="ambient-grid" aria-hidden="true"></div>
+  <div class="grain-layer" aria-hidden="true"></div>
 
-  <div class="app-shell">
-    <header class="topbar">
+  <div class="app-shell" id="app-shell" data-session="idle">
+    <header class="system-header boot-item">
       <a class="brand" href="/" aria-label="Pi Voice home">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-        <span class="brand-word">Pi Voice</span>
+        <span class="brand-mark" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span class="brand-copy">
+          <strong>PI/VOICE</strong>
+          <small>Signal identity system</small>
+        </span>
       </a>
+
+      <div class="header-channel" aria-hidden="true">
+        <span>LOCAL_NODE</span>
+        <i></i>
+        <span>CHANNEL_03</span>
+      </div>
+
       <div class="node-status">
-        <span class="node-label">Node 03</span>
+        <span class="node-label"><i></i>Node 03</span>
         <span id="temp-badge" class="badge" title="Raspberry Pi thermal">Pi --</span>
       </div>
     </header>
 
-    <div id="ctx-warning" class="banner hidden" role="alert">
-      <strong>Microphone access is blocked.</strong>
-      <span>Use HTTPS or mark this origin as secure in Android Chrome.</span>
-      <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>
+    <div id="ctx-warning" class="banner warning hidden" role="alert">
+      <span class="banner-code">SEC/01</span>
+      <div>
+        <strong>Microphone access is blocked.</strong>
+        <span>Use HTTPS or mark this origin as secure in Android Chrome.</span>
+        <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>
+      </div>
     </div>
     <div id="error" class="banner error hidden" role="alert"></div>
 
     <main class="instrument">
-      <section class="intro" aria-labelledby="page-title">
-        <p class="eyebrow"><span></span>Real-time voice instrument</p>
-        <h1 id="page-title">Speak as <em>someone else.</em></h1>
-        <p class="intro-copy">Capture, shape and route your voice through the Pi — live in the browser, on any screen.</p>
-        <ul class="hero-chips" aria-label="Highlights">
-          <li>Pi 4 · on-device</li>
-          <li>Sub-second match</li>
-          <li>Web &amp; mobile</li>
-        </ul>
+      <section class="hero boot-item" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span>SYS.01</span> Real-time voice instrument</p>
+          <h1 id="page-title">VOICE<span class="slash">/</span><br>IDENTITY</h1>
+          <p class="hero-description">Capture, identify, shape, and route a voice through the Pi in real time. One local signal path, built for every screen.</p>
+        </div>
+
+        <div class="hero-spec" aria-label="System capabilities">
+          <span class="spec-index">PV<br>01</span>
+          <ul>
+            <li><span>Core</span><strong>Pi 4 / on-device</strong></li>
+            <li><span>Response</span><strong>Sub-second match</strong></li>
+            <li><span>Interface</span><strong>Web + mobile</strong></li>
+          </ul>
+        </div>
       </section>
 
-      <div class="board">
-        <section id="stage" class="voice-stage" aria-label="Live voice monitor">
-          <div class="stage-header">
-            <span class="stage-label">Voice output</span>
-            <span id="stage-state"><i></i>Standby</span>
-          </div>
+      <div class="system-rule boot-item" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
 
-          <div id="voice-orb" class="voice-orb">
-            <div class="orb-grid" aria-hidden="true"></div>
-            <div class="orb-ring ring-one" aria-hidden="true"></div>
-            <div class="orb-ring ring-two" aria-hidden="true"></div>
-            <canvas id="wave" width="640" height="180" aria-hidden="true"></canvas>
+      <div class="board">
+        <section id="stage" class="voice-stage cut-panel boot-item" aria-labelledby="monitor-title">
+          <div class="panel-corner corner-a" aria-hidden="true"></div>
+          <div class="panel-corner corner-b" aria-hidden="true"></div>
+
+          <header class="panel-heading stage-header">
+            <div>
+              <p class="section-index">01 / Live signal</p>
+              <h2 id="monitor-title">Voice monitor</h2>
+            </div>
+            <span id="stage-state"><i></i>STANDBY</span>
+          </header>
+
+          <div id="voice-orb" class="voice-monitor" data-signal="idle">
+            <div class="monitor-meta monitor-meta-top" aria-hidden="true">
+              <span>IN_01 / PCM16</span>
+              <span>16KHZ / MONO</span>
+            </div>
+            <div class="signal-line" aria-hidden="true"></div>
+            <canvas id="wave" width="900" height="260" aria-hidden="true"></canvas>
             <div class="orb-copy">
               <span class="orb-label">Now hearing</span>
               <div id="speaker" class="unknown">Off air</div>
@@ -82,28 +114,31 @@
                 <svg viewBox="0 0 24 24"><path d="M12 15a4 4 0 0 0 4-4V6a4 4 0 1 0-8 0v5a4 4 0 0 0 4 4Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>
               </span>
               <span class="control-copy">
-                <strong>Start voice session</strong>
+                <strong>Initialize voice session</strong>
                 <small>Enable microphone + live routing</small>
               </span>
+              <span class="control-code">EXEC</span>
               <svg class="arrow-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
             </button>
 
             <button id="btn-ptt" class="identify-control hidden" type="button">
               <span class="identify-icon" aria-hidden="true"><i></i><i></i><i></i></span>
               <span class="identify-copy"><strong>Hold to identify</strong><small>Release for final result</small></span>
+              <span class="hold-code" aria-hidden="true">HOLD</span>
             </button>
           </div>
         </section>
 
         <div class="rail">
-          <section id="fx-row" class="module hidden" aria-labelledby="fx-title">
-            <div class="module-heading">
+          <section id="fx-row" class="module cut-panel effects-panel locked boot-item" data-session-lock inert aria-disabled="true" aria-labelledby="fx-title">
+            <div class="lock-indicator" aria-hidden="true"><i></i><span>Awaiting signal</span></div>
+            <header class="panel-heading">
               <div>
-                <p class="section-index">01 · Treatment</p>
-                <h2 id="fx-title">Shape the <em>signal</em></h2>
+                <p class="section-index">02 / Treatment</p>
+                <h2 id="fx-title">Shape signal</h2>
               </div>
-              <span class="module-value">FX <b id="hud-fx">clean</b></span>
-            </div>
+              <span class="module-value">FX/<b id="hud-fx">clean</b></span>
+            </header>
             <div class="effect-grid">
               <button class="btn fx active" data-effect="clean" type="button"><i>01</i><span>Clean</span></button>
               <button class="btn fx" data-effect="deep" type="button"><i>02</i><span>Deep</span></button>
@@ -113,45 +148,49 @@
             </div>
           </section>
 
-          <section id="enroll" class="module hidden" aria-labelledby="voices-title">
-            <div class="module-heading">
+          <section id="enroll" class="module cut-panel library-panel locked boot-item" data-session-lock inert aria-disabled="true" aria-labelledby="voices-title">
+            <div class="lock-indicator" aria-hidden="true"><i></i><span>Awaiting signal</span></div>
+            <header class="panel-heading">
               <div>
-                <p class="section-index">02 · Voice library</p>
-                <h2 id="voices-title">Choose a <em>voice</em></h2>
+                <p class="section-index">03 / Identity bank</p>
+                <h2 id="voices-title">Voice library</h2>
               </div>
               <span id="target-label" class="module-value">No target</span>
-            </div>
-            <p class="module-description">Tap a saved voice to make it the live conversion target.</p>
+            </header>
+            <p class="module-description">Select a stored identity to make it the live conversion target.</p>
             <ul id="profiles" aria-live="polite"></ul>
 
             <div class="enroll-panel">
               <div class="enroll-copy">
                 <span class="plus-mark" aria-hidden="true">+</span>
-                <div><strong>Enroll a new voice</strong><small>Record a clear 10-second sample</small></div>
+                <div><strong>Enroll new identity</strong><small>Capture one clear 10-second sample</small></div>
               </div>
               <div class="enroll-form">
                 <label class="sr-only" for="enroll-name">Teammate name</label>
-                <input id="enroll-name" type="text" placeholder="Teammate name" autocomplete="off" maxlength="24">
+                <input id="enroll-name" type="text" placeholder="IDENTITY NAME" autocomplete="off" maxlength="24">
                 <button id="btn-enroll" class="enroll-button" type="button">Record 10s</button>
               </div>
               <div id="enroll-status" role="status"></div>
             </div>
           </section>
 
-          <section id="hud" class="telemetry" aria-label="Live telemetry">
-            <div class="telemetry-heading">
-              <p class="section-index">03 · System</p>
-              <span class="chip-mini">Live telemetry</span>
-            </div>
+          <section id="hud" class="telemetry cut-panel boot-item" aria-labelledby="telemetry-title">
+            <header class="panel-heading telemetry-heading">
+              <div>
+                <p class="section-index">04 / System</p>
+                <h2 id="telemetry-title">Telemetry</h2>
+              </div>
+              <span class="chip-mini"><i></i>Live feed</span>
+            </header>
             <div class="telemetry-grid">
-              <div><span>Socket</span><b id="hud-ws" data-state="off">Off</b></div>
-              <div><span>Latency</span><b id="hud-lat">--</b></div>
-              <div><span>RTF</span><b id="hud-rtf">--</b></div>
-              <div><span>Voice</span><b id="hud-voiced">--</b></div>
-              <div><span>Audio RX</span><b id="hud-aud">0f</b></div>
+              <div><span>Socket</span><b id="hud-ws" data-state="off">OFF</b><small>LINK</small></div>
+              <div><span>Latency</span><b id="hud-lat">--</b><small>ROUND TRIP</small></div>
+              <div><span>RTF</span><b id="hud-rtf">--</b><small>FACTOR</small></div>
+              <div><span>Voice</span><b id="hud-voiced">--</b><small>DETECT</small></div>
+              <div><span>Audio RX</span><b id="hud-aud">0f</b><small>FRAMES</small></div>
             </div>
             <label class="aec-control" for="aec">
-              <span><strong>Echo control</strong><small>Reduce speaker feedback</small></span>
+              <span><strong>Echo control</strong><small>Reduce local speaker feedback</small></span>
               <input type="checkbox" id="aec" checked>
               <i aria-hidden="true"></i>
             </label>
@@ -160,8 +199,9 @@
       </div>
     </main>
 
-    <footer class="app-footer">
-      <span>Pi Voice © 2026</span>
+    <footer class="app-footer boot-item">
+      <span>PI VOICE © 2026</span>
+      <span class="footer-system">LOCAL INFERENCE / PRIVATE SIGNAL</span>
       <span id="local-time">--:--</span>
     </footer>
   </div>

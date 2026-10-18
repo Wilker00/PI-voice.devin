@@ -4,7 +4,9 @@ Streams speech-like PCM to /ws exactly as the browser does, then reports
 what comes back: converted-audio frames (+ their RMS — is anything audible?),
 result messages, effect switching, and enrollment. Run with the server up:
 
-    .venv/Scripts/python tests/e2e_check.py [port]
+    .venv/Scripts/python tests/e2e_check.py [port] [host]
+
+e.g. against the Pi through nginx:  tests/e2e_check.py 80 10.104.0.55
 """
 import asyncio
 import json
@@ -14,6 +16,7 @@ import numpy as np
 import websockets
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 3100
+HOST = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
 SR = 16000
 
 
@@ -35,7 +38,7 @@ async def main():
     results = {"binary_frames": 0, "binary_bytes": 0, "out_rms_max": 0.0,
                "results": [], "started": None, "effect_set": None,
                "enrolled": None}
-    uri = f"ws://127.0.0.1:{PORT}/ws"
+    uri = f"ws://{HOST}:{PORT}/ws"
     async with websockets.connect(uri) as ws:
         await ws.send(json.dumps({"type": "start", "sampleRate": SR}))
 

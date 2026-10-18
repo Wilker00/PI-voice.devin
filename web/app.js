@@ -8,6 +8,7 @@ let audioCtx = null;
 let micOn = false;
 let enrolling = false;
 let enrollTimer = null;
+const appShell = $('app-shell');
 
 // mic pipeline refs (needed to toggle AEC live)
 let micStream = null;
@@ -32,6 +33,7 @@ let visPos = 0;
 if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
   $('ctx-warning').classList.remove('hidden');
   $('btn-mic').disabled = true;
+  appShell.dataset.session = 'blocked';
 }
 
 function showError(msg) {
@@ -55,11 +57,24 @@ function setStageState(label, live = false) {
   const stage = $('stage-state');
   stage.lastChild.textContent = ` ${label}`;
   stage.classList.toggle('live', live);
-  $('voice-orb').classList.toggle('live', live);
+  stage.dataset.status = label.toLowerCase();
+  const monitor = $('voice-orb');
+  monitor.classList.toggle('live', live);
+  appShell.dataset.connection = label.toLowerCase();
+}
+
+function unlockSessionModules() {
+  appShell.dataset.session = 'active';
+  document.querySelectorAll('[data-session-lock]').forEach((module) => {
+    module.removeAttribute('inert');
+    module.removeAttribute('aria-disabled');
+    module.classList.remove('locked');
+  });
 }
 
 function connectWS() {
   if (!micOn) return;
+  setStageState('CONNECTING', false);
   ws = new WebSocket(wsURL());
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
@@ -92,14 +107,17 @@ function connectWS() {
 /* ---------------- results / HUD ---------------- */
 function onResult(msg) {
   const el = $('speaker');
+  const monitor = $('voice-orb');
   const confidence = Math.round(msg.confidence * 100);
   if (msg.speaker === null) {
     el.textContent = 'Listening…';
     el.className = 'unknown';
+    monitor.dataset.signal = 'listening';
     $('confidence-readout').textContent = 'Below voice threshold';
   } else {
     el.textContent = msg.speaker;
     el.className = msg.speaker === 'unknown' ? 'unknown' : '';
+    monitor.dataset.signal = msg.speaker === 'unknown' ? 'unknown' : 'identified';
     $('confidence-readout').textContent = msg.speaker === 'unknown'
       ? `${confidence}% / no match`
       : `${confidence}% confidence`;
@@ -127,6 +145,11 @@ function micConstraints(aec) {
 }
 
 async function startMic() {
+  const micButton = $('btn-mic');
+  micButton.disabled = true;
+  micButton.classList.add('pending');
+  setStageState('ARMING', false);
+  appShell.dataset.session = 'arming';
   try {
     audioCtx = new AudioContext();
     await audioCtx.audioWorklet.addModule('audio-worklet.js');
@@ -157,10 +180,11 @@ async function startMic() {
     mute.connect(audioCtx.destination);
 
     micOn = true;
+    unlockSessionModules();
     connectWS();
-    const micButton = $('btn-mic');
     micButton.querySelector('.control-copy strong').textContent = 'Voice session live';
     micButton.querySelector('.control-copy small').textContent = 'Audio is routing through the Pi';
+    micButton.classList.remove('pending');
     micButton.classList.add('live');
     micButton.disabled = true;
     $('speaker').textContent = 'Listening…';
@@ -170,6 +194,11 @@ async function startMic() {
     $('enroll').classList.remove('hidden');
     drawWave();
   } catch (err) {
+    micOn = false;
+    appShell.dataset.session = 'idle';
+    micButton.disabled = false;
+    micButton.classList.remove('pending');
+    setStageState('ERROR', false);
     showError(`getUserMedia failed: ${err.name} ${err.message}`);
   }
 }
@@ -249,10 +278,14 @@ function onPCM(arrayBuffer) {
 
 /* ---------------- push-to-talk ---------------- */
 const ptt = $('btn-ptt');
-ptt.addEventListener('pointerdown', () => ptt.classList.add('held'));
+ptt.addEventListener('pointerdown', () => {
+  ptt.classList.add('held');
+  $('voice-orb').classList.add('identifying');
+});
 const endPTT = () => {
   if (ptt.classList.contains('held')) {
     ptt.classList.remove('held');
+    $('voice-orb').classList.remove('identifying');
     send({ type: 'final' });
   }
 };
@@ -272,6 +305,7 @@ $('enroll-name').addEventListener('keydown', (event) => {
 
 function onEnrollStarted(msg) {
   enrolling = true;
+  $('enroll').classList.add('enrolling');
   $('btn-enroll').disabled = true;
   let left = msg.seconds;
   const label = `Recording ${msg.name}… `;
@@ -290,6 +324,7 @@ function onEnrollStarted(msg) {
 
 function onEnrolled(msg) {
   enrolling = false;
+  $('enroll').classList.remove('enrolling');
   $('btn-enroll').disabled = false;
   $('enroll-status').textContent = msg.ok
     ? `Enrolled "${msg.name}".`
@@ -302,6 +337,7 @@ function onEnrolled(msg) {
 
 function onTargetSet(msg) {
   activeTarget = msg.name;
+  appShell.dataset.target = msg.found ? 'selected' : 'none';
   $('target-label').textContent = msg.found ? `TARGET / ${msg.name}` : 'NO TARGET';
   refreshProfiles();
   if (!msg.found) showError(`No voice profile for "${msg.name}" — converting raw`);
@@ -309,6 +345,7 @@ function onTargetSet(msg) {
 
 /* ---------------- voice effects ---------------- */
 function onEffectSet(msg) {
+  appShell.dataset.effect = msg.name;
   $('hud-fx').textContent = msg.name === 'clone' && activeTarget
     ? `clone:${activeTarget}` : msg.name;
   document.querySelectorAll('.btn.fx').forEach((b) =>
@@ -391,7 +428,9 @@ async function pollSystem() {
     if (s.on_pi && s.temp_c != null) {
       badge.textContent = `PI ${s.temp_c.toFixed(1)}°C`;
       badge.className = 'badge' + (s.throttled ? ' throttled' : s.temp_c > 70 ? ' hot' : '');
-      badge.title = s.throttled ? 'Raspberry Pi thermal — THROTTLING' : 'Raspberry Pi thermal';
+      badge.title = s.throttled ? 'Raspberry Pi thermal — THROTTLING'
+        : s.throttled_since_boot ? `Raspberry Pi thermal — throttled earlier since boot (${s.throttled_hex})`
+        : 'Raspberry Pi thermal';
     } else {
       badge.textContent = 'PI N/A';
       badge.className = 'badge';
@@ -410,12 +449,13 @@ function drawWave() {
   (function frame() {
     g.clearRect(0, 0, w, h);
     const gradient = g.createLinearGradient(0, 0, w, 0);
-    gradient.addColorStop(0, 'rgba(100, 128, 62, 0)');
-    gradient.addColorStop(.22, 'rgba(100, 128, 62, .85)');
-    gradient.addColorStop(.78, 'rgba(35, 41, 31, .9)');
-    gradient.addColorStop(1, 'rgba(35, 41, 31, 0)');
+    gradient.addColorStop(0, 'rgba(13, 17, 16, 0)');
+    gradient.addColorStop(.18, 'rgba(13, 17, 16, .72)');
+    gradient.addColorStop(.52, 'rgba(255, 107, 66, .96)');
+    gradient.addColorStop(.82, 'rgba(13, 17, 16, .76)');
+    gradient.addColorStop(1, 'rgba(13, 17, 16, 0)');
     g.strokeStyle = gradient;
-    g.lineWidth = 2;
+    g.lineWidth = 2.4;
     g.beginPath();
     const step = Math.ceil(VIS_LEN / w);
     for (let x = 0; x < w; x++) {

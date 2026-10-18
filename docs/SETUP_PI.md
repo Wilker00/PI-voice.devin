@@ -30,10 +30,45 @@ PORT=3000 ./start.sh
 
 `start.sh` uses `.venv/bin/python` when present, else `python3`.
 
+For the demo, run it as a service instead, so it survives SSH logout and
+reboots and restarts on a crash:
+
+```bash
+./pi/setup.sh --service       # installs + starts pi-voice.service
+sudo systemctl status pi-voice
+journalctl -u pi-voice -f     # live logs
+```
+
+The service binds `127.0.0.1:3000`, so the only way in is through nginx on
+:80. `./start.sh` on its own binds `0.0.0.0`, which exposes :3000 (and the
+unauthenticated `DELETE /api/profiles/*`) to the whole network.
+`setup.sh` also adds your user to the `video` group, which `vcgencmd`
+needs. Without it the thermal badge shows `PI N/A`, even on the Pi.
+
+Smoke-test from the laptop once it's up:
+
+```powershell
+.venv\Scripts\python tests\e2e_check.py 80 10.104.0.55
+```
+
 ## 4. nginx site
 
-The app expects nginx to forward :80 to it. WebSockets **require** the
-`Upgrade`/`Connection` headers — without them `/ws` fails and no audio flows:
+Automatic (recommended):
+
+```bash
+./pi/setup.sh --nginx     # installs nginx + WS-ready site on :80
+./pi/setup.sh --tls       # additionally: self-signed cert + :443 (iPhone/Safari)
+```
+
+Flags combine: `./pi/setup.sh --service --nginx --tls` is the full demo
+install. The generated site keeps `Upgrade`/`Connection` headers — without
+them `/ws` fails and no audio flows. `--tls` generates a self-signed cert
+(SANs: `pi-03.local`, `10.104.0.55`, plus the Pi's current IP) into
+`/etc/nginx/pi-voice/`; phones accept the browser warning once.
+
+Manual equivalent — drop this in `/etc/nginx/sites-available/pi-voice`,
+symlink into `sites-enabled`, then `sudo nginx -t && sudo systemctl reload
+nginx`:
 
 ```nginx
 server {
@@ -51,9 +86,6 @@ server {
 }
 ```
 
-Drop it in `/etc/nginx/sites-available/pi-voice`, symlink into
-`sites-enabled`, then `sudo nginx -t && sudo systemctl reload nginx`.
-
 ## 5. Phone access + the mic/secure-context gotcha
 
 Pi on the team network: `10.104.0.55` (robbie, 2026-10-18) — prefer
@@ -67,8 +99,9 @@ so pick one fix on the demo phone:
   `http://10.104.0.55` and `http://pi-03.local`, relaunch Chrome.
 - **Laptop dev:** `http://localhost:3000` is a secure context — mic works
   with no changes.
-- **Alternative:** terminate TLS in nginx with a self-signed cert and accept
-  the warning once (app itself stays plain HTTP).
+- **iPhone / Safari:** Safari has no insecure-origin flag — it needs real
+  HTTPS. Run `./pi/setup.sh --tls`, open `https://10.104.0.55`, accept the
+  cert warning once.
 
 ## Feedback control (mic + speaker on the same phone)
 
@@ -99,7 +132,7 @@ app ships the team's feedback plan built in:
 | Web UI | `GET /` |
 | Audio + control socket | `WS /ws` |
 | Health | `GET /api/health` |
-| Thermal/throttle stats (`vcgencmd`) | `GET /api/system` — shown as the on-page badge, polled every 5 s |
+| Thermal/throttle stats (`vcgencmd`) | `GET /api/system` — shown as the on-page badge, polled every 5 s. `throttled` = happening now, `throttled_since_boot` = happened earlier |
 | Enrolled voices | `GET/DELETE /api/profiles[/{name}]` |
 
 Baseline: `vcgencmd measure_temp` read **43.3 °C** at idle on pi-03
