@@ -33,13 +33,15 @@ Android Chrome ──nginx:80──► FastAPI on Pi (:3000, 127.0.0.1)
 **Starbook (10.104.0.61)** — relay must be running for conversions:
 
 ```bash
+mkdir -p /tmp/opencode   # /tmp is wiped on reboot
 cd /home/robbie && nohup pi-voice/.venv/bin/python -m uvicorn \
   vc_relay:app --host 0.0.0.0 --port 8081 > /tmp/opencode/vc_relay.log 2>&1 &
 curl -s http://127.0.0.1:8081/health   # sanity
 ```
 
 Dependencies: `audiocpp-x64/` (prebuilt v0.9.2 x64 CPU build + GGUF in
-`audiocpp-x64/model/`), pi-voice venv (fastapi, uvicorn, python-multipart).
+`audiocpp-x64/model/`), pi-voice venv (`pip install -r requirements.txt`,
+which includes python-multipart for the upload endpoint).
 
 **Pi (pi-03)** — app restart:
 

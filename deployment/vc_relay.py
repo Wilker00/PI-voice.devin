@@ -39,6 +39,7 @@ def health():
 def convert(audio: UploadFile = File(...), ref: UploadFile = File(...),
             threads: int = THREADS):
     with _lock:
+        os.makedirs("/tmp/opencode", exist_ok=True)   # /tmp is wiped on reboot
         with tempfile.TemporaryDirectory(prefix="vc-relay-",
                                           dir="/tmp/opencode") as td:
             in_p, ref_p, out_p = (f"{td}/in.wav", f"{td}/ref.wav",
