@@ -48,13 +48,22 @@ class ClientSession:
     async def run(self) -> None:
         recv = asyncio.create_task(self._recv_loop())
         infer = asyncio.create_task(self._infer_loop())
+        tasks = (recv, infer)
         try:
-            _, pending = await asyncio.wait(
-                (recv, infer), return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            done, _ = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                await task
+        except asyncio.CancelledError:
+            # Normal ASGI/WebSocket shutdown. Finish our child tasks here so
+            # TestClient and production servers do not inherit cancellation.
+            self._stop.set()
         finally:
+            self._stop.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             self._cancel_prepare()
 
     # -- inbound -----------------------------------------------------

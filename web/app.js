@@ -48,6 +48,7 @@ let personaIdentity = null;
 let queuedIdentity = null;
 let takeoverTimer = null;
 let personaTimer = null;
+let queuedLaunchTimer = null;
 
 // small display-only ring of recent samples for the waveform canvas
 const VIS_LEN = 8192;
@@ -212,6 +213,7 @@ function beginIdentitySequence(identity) {
     if (!personaIdentity || identity.name !== personaIdentity.name) queuedIdentity = identity;
     return;
   }
+  clearTimeout(queuedLaunchTimer);
   clearTimeout(takeoverTimer);
   clearTimeout(personaTimer);
   personaIdentity = identity;
@@ -241,7 +243,8 @@ function returnToConsole() {
   if (queuedIdentity) {
     const nextIdentity = queuedIdentity;
     queuedIdentity = null;
-    setTimeout(() => beginIdentitySequence(nextIdentity), reduceMotion ? 0 : 300);
+    queuedLaunchTimer = setTimeout(
+      () => beginIdentitySequence(nextIdentity), reduceMotion ? 0 : 300);
   }
 }
 
@@ -513,13 +516,13 @@ function onTransformState(msg) {
     transformFallback = msg.fallback;
     lastCharacterEffect = msg.fallback;
   }
-  if (msg.target && msg.phase !== 'cancelled') activeTarget = msg.target;
   if (msg.phase === 'preparing') {
     $('target-label').textContent = `CLONE / ${msg.target} / PREPARING`;
   } else if (msg.phase === 'ready') {
     $('target-label').textContent = `TARGET / ${msg.target}`;
   } else if (msg.phase === 'fallback') {
-    $('target-label').textContent = `TARGET / ${msg.target} / DSP`;
+    $('target-label').textContent = activeTarget
+      ? `TARGET / ${msg.target} / DSP` : 'NO TARGET';
   }
   updatePersona();
   if (presentationState === 'persona') {

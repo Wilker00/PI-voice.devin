@@ -73,3 +73,27 @@ def test_responsive_motion_and_local_fonts():
     assert len(font_urls) == 3
     for url in font_urls:
         assert (WEB / url).is_file(), f"missing local font: {url}"
+
+
+def test_breach_persona_contract():
+    html, parser = parsed_frontend()
+    required = {
+        "breach-takeover", "breach-identity", "persona-monitor",
+        "persona-source", "persona-destination", "persona-status",
+        "persona-confidence", "persona-latency", "persona-level",
+        "monitor-default", "sr-status",
+    }
+    assert required <= set(parser.ids)
+    assert 'data-presentation="console"' in html
+    assert 'data-effect="deep"' in html and ">Vader<" in html
+    assert 'data-effect="chipmunk"' in html and ">Chipmunk<" in html
+
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "transform_state" in js
+    assert "identityStreak < 2" in js
+    assert "const TAKEOVER_MS" in js and "const PERSONA_MS = 4500" in js
+
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    assert '.breach-takeover[data-active="true"]' in css
+    assert '.app-shell[data-presentation="persona"]' in css
+    assert "@keyframes breachJolt" in css

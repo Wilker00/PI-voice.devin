@@ -161,6 +161,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .breach-takeover[data-active="true"] {
   visibility: visible;
   opacity: 1;
+  pointer-events: auto;
   transition-delay: 0s;
 }
 .breach-takeover[data-active="true"]::after { animation: breachScan .42s linear 3; }
