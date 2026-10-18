@@ -71,6 +71,7 @@ function connectWS() {
     else if (msg.type === 'enroll_started') onEnrollStarted(msg);
     else if (msg.type === 'enrolled') onEnrolled(msg);
     else if (msg.type === 'target_set') onTargetSet(msg);
+    else if (msg.type === 'effect_set') onEffectSet(msg);
     else if (msg.type === 'error') showError(msg.message);
   };
 }
@@ -141,6 +142,7 @@ async function startMic() {
     $('btn-mic').textContent = 'Mic live';
     $('btn-mic').disabled = true;
     $('btn-ptt').classList.remove('hidden');
+    $('fx-row').classList.remove('hidden');
     $('enroll').classList.remove('hidden');
     drawWave();
   } catch (err) {
@@ -263,6 +265,17 @@ function onTargetSet(msg) {
   refreshProfiles();
   if (!msg.found) showError(`no voice profile for "${msg.name}" — converting raw`);
 }
+
+/* ---------------- voice effects ---------------- */
+function onEffectSet(msg) {
+  $('hud-fx').textContent = msg.name === 'clone' && activeTarget
+    ? `clone:${activeTarget}` : msg.name;
+  document.querySelectorAll('.btn.fx').forEach((b) =>
+    b.classList.toggle('active', b.dataset.effect === msg.name));
+}
+document.querySelectorAll('.btn.fx').forEach((b) =>
+  b.addEventListener('click', () =>
+    send({ type: 'effect', name: b.dataset.effect })));
 
 async function refreshProfiles() {
   try {

@@ -44,7 +44,10 @@ main { flex: 1; padding: 8px 16px 16px; }
   background: var(--panel); border-radius: 8px; margin-top: 8px;
 }
 
-#controls { display: flex; gap: 12px; justify-content: center; margin: 8px 0 20px; }
+#controls { display: flex; gap: 12px; justify-content: center; margin: 8px 0 12px; }
+#fx-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 0 0 20px; }
+.btn.fx { padding: 9px 14px; font-size: .85rem; color: var(--dim); }
+.btn.fx.active { color: var(--accent); border-color: var(--accent); }
 .btn {
   background: var(--panel); color: var(--fg); border: 1px solid #30363d;
   border-radius: 10px; padding: 14px 22px; font-size: 1rem; cursor: pointer;

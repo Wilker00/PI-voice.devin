@@ -1,16 +1,22 @@
-"""Speaker-model adapter.
+"""Voice model adapter.
 
 The real voice-conversion model (a teammate's component) is plugged in by
 setting MODEL_MODULE to a Python module exposing either a `load()` function
 returning an object with these methods, or the functions directly:
 
-`embed(pcm_f32_16k) -> 1-D embedding ndarray`          (enrollment clip)
-`convert(pcm_f32_16k, target_emb|None) -> pcm_f32`     (voice conversion)
-`identify(pcm_f32_16k, profiles) -> (label, conf)`     (optional; who is talking)
+`embed(pcm_f32_16k) -> 1-D embedding ndarray`              (enrollment clip)
+`analyze_clip(pcm) -> {"f0": ...}`                          (optional)
+`open_stream() -> {convert(pcm, target), set_effect(name)}` (optional; stateful
+                                                           per-client converter)
+`convert(pcm_f32_16k, target|None) -> pcm_f32`              (stateless fallback)
+`identify(pcm_f32_16k, profiles) -> (label, conf)`          (optional)
 
-Until then, StubModel exercises the full pipeline: cosine-similarity
-identification over spectral features, plus a stateless "megaphone"
-convert() so converted audio is audible end-to-end on the phone speaker.
+`target` is the profile dict {"emb": ndarray, "f0": float|None} of the voice
+the user picked, or None.
+
+Until the real model lands, VoiceChangerModel provides the full pipeline:
+identification via spectral features + cosine similarity, and a real DSP
+voice changer (pitch shift, robot, megaphone, F0-matched "clone").
 """
 from __future__ import annotations
 
@@ -21,10 +27,16 @@ from typing import Protocol
 
 import numpy as np
 
+from .dsp import PitchShifter, RingMod, estimate_f0, megaphone
+
 log = logging.getLogger("pi_voice.model")
 
 _EPS = 1e-8
 _BANDS = 8  # log-spaced band energies appended to the feature vector
+
+EFFECTS = ("clean", "deep", "chipmunk", "robot", "megaphone", "clone")
+_SHIFT_RATIOS = {"deep": 0.749, "chipmunk": 1.414}
+_CLONE_CLAMP = (0.6, 1.7)   # sane bounds for F0-match ratio
 
 
 def _features(pcm: np.ndarray, sr: int) -> np.ndarray:
@@ -53,16 +65,55 @@ def _features(pcm: np.ndarray, sr: int) -> np.ndarray:
 
 class SpeakerModel(Protocol):
     def embed(self, pcm: np.ndarray) -> np.ndarray: ...
-    def convert(self, pcm: np.ndarray,
-                target: np.ndarray | None) -> np.ndarray: ...
+    def convert(self, pcm: np.ndarray, target: dict | None) -> np.ndarray: ...
     def identify(self, pcm: np.ndarray,
                  profiles: dict[str, np.ndarray]) -> tuple[str, float]: ...
 
 
-class StubModel:
-    """Placeholder: cosine-similarity ID over _features(), and a stateless
-    'megaphone' conversion (tanh grit + 5-tap smoothing) so the audio
-    round-trip is audible until the real VC model lands."""
+class VoiceStream:
+    """Per-client stateful converter. Stateful because pitch shifting and
+    ring modulation carry phase/history between chunks."""
+
+    def __init__(self, sr: int):
+        self.sr = sr
+        self.shifter = PitchShifter(sr)
+        self.ringmod = RingMod(sr)
+        self.effect = "clone"
+        self.ratio_ema = 1.0                    # smoothed clone ratio
+        self.f0_buf = np.zeros(int(sr * 0.15), dtype=np.float32)  # 150 ms
+
+    def set_effect(self, name: str) -> None:
+        if name in EFFECTS:
+            self.effect = name
+
+    def convert(self, pcm: np.ndarray, target: dict | None) -> np.ndarray:
+        pcm = np.asarray(pcm, dtype=np.float32)
+        if pcm.size == 0:
+            return pcm
+        self.f0_buf = np.concatenate([self.f0_buf, pcm])[-self.f0_buf.size:]
+        e = self.effect
+        if e == "clean":
+            return pcm
+        if e == "robot":
+            return self.ringmod.process(pcm)
+        if e == "megaphone":
+            return megaphone(pcm)
+        if e == "clone":
+            f0_t = target.get("f0") if target else None
+            if f0_t:
+                f0_in = estimate_f0(self.f0_buf, self.sr)
+                if f0_in:
+                    r = float(np.clip(f0_t / f0_in, *_CLONE_CLAMP))
+                    self.ratio_ema = 0.8 * self.ratio_ema + 0.2 * r
+            self.shifter.ratio = self.ratio_ema
+            return self.shifter.process(pcm)
+        self.shifter.ratio = _SHIFT_RATIOS.get(e, 1.0)
+        return self.shifter.process(pcm)
+
+
+class VoiceChangerModel:
+    """Built-in model: spectral-feature identification + the DSP voice
+    changer. Replaced wholesale by MODEL_MODULE when the real one lands."""
 
     def __init__(self, sr: int = 16000):
         self.sr = sr
@@ -71,13 +122,8 @@ class StubModel:
         v = _features(pcm, self.sr)
         return v / (np.linalg.norm(v) + _EPS)
 
-    def convert(self, pcm: np.ndarray,
-                target: np.ndarray | None = None) -> np.ndarray:
-        if pcm.size == 0:
-            return pcm
-        y = np.tanh(2.5 * pcm)
-        y = np.convolve(y, np.ones(5) / 5.0, mode="same")
-        return (0.8 * y).astype(np.float32)
+    def analyze_clip(self, pcm: np.ndarray) -> dict:
+        return {"f0": estimate_f0(pcm, self.sr)}
 
     def identify(self, pcm: np.ndarray,
                  profiles: dict[str, np.ndarray]) -> tuple[str, float]:
@@ -93,9 +139,13 @@ class StubModel:
                 best_name, best_sim = name, sim
         return best_name, max(0.0, min(1.0, best_sim))
 
+    def open_stream(self) -> VoiceStream:
+        return VoiceStream(self.sr)
+
 
 def load_model() -> SpeakerModel:
-    """Return the teammate's model if MODEL_MODULE is set, else StubModel."""
+    """Return the teammate's model if MODEL_MODULE is set, else the
+    built-in voice changer."""
     module_name = os.environ.get("MODEL_MODULE")
     if module_name:
         try:
@@ -104,6 +154,6 @@ def load_model() -> SpeakerModel:
             log.info("Loaded model module %s", module_name)
             return model
         except Exception:
-            log.exception("MODEL_MODULE=%s failed to load; using StubModel",
-                          module_name)
-    return StubModel()
+            log.exception("MODEL_MODULE=%s failed to load; using built-in "
+                          "voice changer", module_name)
+    return VoiceChangerModel()

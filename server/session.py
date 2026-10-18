@@ -28,7 +28,10 @@ class ClientSession:
         self.src_rate = settings.model_sr  # until client reports otherwise
         self.enrolling: str | None = None
         self.target_name: str | None = None
-        self.target_emb: np.ndarray | None = None
+        self.target: dict | None = None   # {"emb": ndarray, "f0": float|None}
+        # Prefer a stateful per-client stream when the model offers one.
+        self.conv = (model.open_stream()
+                     if hasattr(model, "open_stream") else model)
         self._stop = asyncio.Event()
 
     async def run(self) -> None:
@@ -62,10 +65,10 @@ class ClientSession:
         self.ring.write(pcm)
         # Per-chunk conversion keeps the speaker loop low-latency.
         # While enrolling we buffer only — no playback to feed back.
-        convert = getattr(self.model, "convert", None)
+        convert = getattr(self.conv, "convert", None)
         if convert is None or self.enrolling:
             return
-        out = await asyncio.to_thread(convert, pcm, self.target_emb)
+        out = await asyncio.to_thread(convert, pcm, self.target)
         if out is None or out.size == 0:
             return
         if self.src_rate != self.s.model_sr:
@@ -94,9 +97,20 @@ class ClientSession:
         elif kind == "target":
             name = msg.get("name")
             self.target_name = name
-            self.target_emb = self.profiles.embeddings().get(name)
+            self.target = self.profiles.get(name)
+            # Picking a voice implies clone-to-that-voice.
+            set_fx = getattr(self.conv, "set_effect", None)
+            if set_fx:
+                set_fx("clone")
             await self._send({"type": "target_set", "name": name,
-                              "found": self.target_emb is not None})
+                              "found": self.target is not None})
+            await self._send({"type": "effect_set", "name": "clone"})
+        elif kind == "effect":
+            name = str(msg.get("name") or "clean")
+            set_fx = getattr(self.conv, "set_effect", None)
+            if set_fx:
+                set_fx(name)
+            await self._send({"type": "effect_set", "name": name})
         elif kind == "ping":
             await self._send({"type": "pong"})
         elif kind == "stop":
@@ -149,9 +163,13 @@ class ClientSession:
                               "name": name, "error": "clip too short/quiet"})
             return
         emb = await asyncio.to_thread(self.model.embed, clip)
-        self.profiles.add(name, emb)
+        f0 = None
+        analyze = getattr(self.model, "analyze_clip", None)
+        if analyze:
+            f0 = (await asyncio.to_thread(analyze, clip)).get("f0")
+        self.profiles.add(name, emb, f0)
         await self._send({"type": "enrolled", "ok": True, "name": name,
-                          "profiles": self.profiles.names()})
+                          "f0": f0, "profiles": self.profiles.names()})
 
     async def _send(self, payload: dict) -> None:
         try:

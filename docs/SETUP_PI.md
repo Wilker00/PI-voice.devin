@@ -115,10 +115,28 @@ Set `MODEL_MODULE` to a module exposing `embed(pcm)`,
 MODEL_MODULE=pi_voice_model ./start.sh
 ```
 
-`pcm` is a float32 numpy array at `MODEL_SR` (16 kHz mono); `convert` runs
-per ~85 ms chunk so keep it streaming-friendly. Until then a `StubModel`
-(spectral features + cosine similarity + a "megaphone" effect) exercises
-the whole pipeline end-to-end.
+`pcm` is a float32 numpy array at `MODEL_SR` (16 kHz mono); conversion
+runs per ~85 ms chunk so keep it streaming-friendly. A model can also
+expose `open_stream()` returning a **stateful** per-client converter
+with `convert(pcm, target)` + `set_effect(name)` — `target` is the
+selected profile `{"emb", "f0"}`.
+
+## Built-in voice changer
+
+Until the real model lands, `VoiceChangerModel` does actual conversion:
+
+| Button | What it does |
+| --- | --- |
+| Clean | Passthrough |
+| Deep | Pitch shift −5 st (delay-line dual-reader shifter) |
+| Chipmunk | Pitch shift +6 st |
+| Robot | 30 Hz ring-mod (Dalek) |
+| Mega | Soft-clip + band-smoothing loudspeaker coloration |
+| *(tap enrolled name)* | **Clone** — pitch-matches your live F0 toward the target's F0 measured at enrollment (EMA-smoothed, clamped 0.6–1.7×) |
+
+Clone mode uses the enrolled clip's autocorrelation F0 — it shifts pitch
+toward the teammate's register, not their full timbre; that's what the
+real model is for. All effects are stateful per-client via `open_stream()`.
 
 ## Config env vars
 
